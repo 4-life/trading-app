@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.0 # no floating major tag - exact versions only
       - name: Backend - install
         working-directory: backend
         run: uv sync --locked
