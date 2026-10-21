@@ -1,9 +1,3 @@
-# CI/CD (docs/deployment.md#cicd-github-actions): checks on every push and
-# pull request; on push to main, build + push the images to ghcr.io and
-# deploy them to the VPS over SSH. The VPS is prepared once - with
-# scripts/deploy.sh (which prints the VPS_* secrets) or by hand on an existing
-# server (docs/deployment.md#an-existing-server): a `deploy` user in the
-# `docker` group, Nginx + TLS in front of 127.0.0.1:3000.
 name: CI/CD
 
 on:
@@ -173,8 +167,11 @@ jobs:
           # Deploy-aware alerts (docs/watchdog.md#deploys): held from here until the
           # watchdog's summary after the finish. Fails harmlessly on a first deploy
           # (no database yet); the finish runs even if the deploy fails.
+          # </dev/null: this script arrives on stdin (bash -s) - `compose run`
+          # would read it too, swallowing every line after it.
           deploy_marker() {
-            compose run --rm --no-deps -T migrate python -m app.system.deploy "$1" >/dev/null 2>&1 \
+            compose run --rm --no-deps -T migrate python -m app.system.deploy "$1" \
+              </dev/null >/dev/null 2>&1 \
               || echo "(deploy $1 not recorded - no database yet?)"
           }
           deploy_marker start
