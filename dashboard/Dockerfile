@@ -3,6 +3,9 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install
 COPY . .
+# The public domain, allowed to post actions (react-router.config.ts); empty locally.
+ARG DOMAIN=""
+ENV DOMAIN=$DOMAIN
 RUN npm run build
 
 FROM node:22-slim

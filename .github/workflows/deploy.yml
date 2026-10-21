@@ -85,6 +85,9 @@ jobs:
         with:
           context: dashboard
           push: true
+          # Baked into the build: the domain allowed to post actions (CSRF check).
+          build-args: |
+            DOMAIN=${{ vars.DOMAIN }}
           tags: |
             ${{ steps.names.outputs.dashboard }}
             ${{ steps.names.outputs.dashboard_latest }}
