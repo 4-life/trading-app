@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+
+# React Router
+dashboard/build/
+dashboard/.react-router/
+
+# Env
+.env
+
+# OS
+.DS_Store
+
+# AI
+AGENTS.md

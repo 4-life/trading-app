@@ -1,0 +1,56 @@
+name: trading-app-test
+
+# Throwaway e2e stack: fresh Postgres -> migrate -> the pipeline tests
+# (tests/test_pipeline.py creates a paper, then backfills and runs every
+# layer itself) -> `down -v` deletes containers and database. Separate
+# project name, so it never shares volumes with a local/production stack.
+# Run it through scripts/e2e-test.sh, which guarantees the teardown.
+
+x-test-env: &test-env
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  # Test-only secrets - never the real ones from .env.
+  APP_PASSWORD: e2e-password
+  SETTINGS_ENCRYPTION_KEY: qSZ0HQMk4v2C2-cEqwfmkjR9rj5KP6pHEwLfLzOJDbs=
+  BACKFILL_DAYS: 3
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: "no"
+    env_file: "../../.env"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:8-alpine
+    restart: "no"
+
+  migrate:
+    build:
+      context: ../../backend
+      target: migrator
+    restart: "no"
+    env_file: "../../.env"
+    environment: *test-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  e2e-tests:
+    build:
+      context: ../../backend
+      target: test
+    restart: "no"
+    env_file: "../../.env"
+    environment: *test-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started

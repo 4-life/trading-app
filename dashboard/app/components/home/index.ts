@@ -1,0 +1,10 @@
+export { ChartSection } from "./chart-section";
+export { DecisionsSection } from "./decisions-section";
+export { DemoSection } from "./demo-section";
+export { FaviconSection } from "./favicon-section";
+export { HealthSection } from "./health-section";
+export { LiveSection } from "./live-section";
+export { PapersSection } from "./papers-section";
+export { PositionsSection } from "./positions-section";
+export { SettingsSection } from "./settings-section";
+export { TitleSection } from "./title-section";

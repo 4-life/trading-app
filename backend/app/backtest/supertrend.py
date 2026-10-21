@@ -1,0 +1,100 @@
+"""Temporary Supertrend backtest (docs/supertrend-strategy-engine.md#backtest):
+replays the executor's rules over every Supertrend paper's stored candles and
+replaces its rows in `backtest_trades`. Run after a backfill:
+
+    python -m app.backtest.supertrend [YYYY-MM-DD]
+
+Trades start on the given date - the whole history by default.
+
+At each signal candle's close of the paper's Supertrend (on the lower
+trendline for a long paper, the upper for a short one): its opening signal
+opens the position there, its closing one closes it there. No stop-loss.
+Fees: the selected provider's maker fee on both sides, as for VWAP."""
+
+import logging
+import sys
+from datetime import UTC, datetime
+
+from app.backtest.bars import (
+    Bar,
+    SimTrade,
+    load_bars,
+    paper_exits,
+    save_trades,
+    strategy_papers,
+    with_paper_exits,
+)
+from app.backtest.models import OPEN_AT_END
+from app.executors.supertrend import SUPERTREND_BUY, SUPERTREND_SELL, signals
+from app.notifications.error_reporting import run_service
+from app.order_queue import Direction
+from app.papers.models import Paper
+
+logger = logging.getLogger(__name__)
+
+
+def simulate(
+    bars: list[Bar], direction: Direction = "long", start: datetime | None = None
+) -> list[SimTrade]:
+    """From `start`, one position at a time."""
+    st = signals([b.high for b in bars], [b.low for b in bars], [b.close for b in bars], direction)
+    long = direction == "long"
+    opens, closes = (st.buy, st.sell) if long else (st.sell, st.buy)
+    entry, exit_ = (SUPERTREND_BUY, SUPERTREND_SELL) if long else (SUPERTREND_SELL, SUPERTREND_BUY)
+    trades: list[SimTrade] = []
+    pos: SimTrade | None = None
+    for i, bar in enumerate(bars):
+        if start is not None and bar.time < start:
+            continue
+        if pos is not None and closes[i]:
+            pos.closed_at, pos.close_price, pos.exit_reason = bar.time, bar.close, exit_
+            trades.append(pos)
+            pos = None
+        elif pos is None and opens[i]:
+            pos = SimTrade(direction, bar.time, bar.close, None, entry_reason=entry)
+    if pos is not None and bars:
+        pos.closed_at, pos.close_price, pos.exit_reason = bars[-1].time, bars[-1].close, OPEN_AT_END
+        trades.append(pos)
+    return trades
+
+
+def _direction(paper: Paper) -> Direction:
+    return "long" if paper.direction == "long" else "short"
+
+
+def simulate_paper(paper: Paper, bars: list[Bar], start: datetime | None = None) -> list[SimTrade]:
+    """The strategy's own trades over `bars` - its backtest without saving
+    (also the entry signals of an averaging paper's backtest) - cut at the
+    paper's own stop-loss / take-profit, if it has them."""
+    return with_paper_exits(simulate(bars, _direction(paper), start), bars, *paper_exits(paper))
+
+
+def entry_signals(paper: Paper, bars: list[Bar]) -> list[SimTrade]:
+    """Every candle the strategy signals a long on - an entry when flat, held
+    or not (an averaging paper's entries and signal adds)."""
+    if _direction(paper) != "long":
+        return []
+    st = signals([b.high for b in bars], [b.low for b in bars], [b.close for b in bars], "long")
+    return [
+        SimTrade("long", bar.time, bar.close, None, entry_reason=SUPERTREND_BUY)
+        for i, bar in enumerate(bars)
+        if st.buy[i]
+    ]
+
+
+async def backtest_paper(paper: Paper, start: datetime | None) -> list[SimTrade]:
+    bars = await load_bars(paper)
+    return await save_trades(paper, simulate_paper(paper, bars, start), bars, start)
+
+
+async def main() -> None:
+    start = datetime.fromisoformat(sys.argv[1]).replace(tzinfo=UTC) if len(sys.argv) > 1 else None
+    papers = await strategy_papers("supertrend")
+    if not papers:
+        logger.info("no Supertrend papers - nothing to backtest")
+    for paper in papers:
+        await backtest_paper(paper, start)
+
+
+if __name__ == "__main__":
+    run_service("backtest", main)

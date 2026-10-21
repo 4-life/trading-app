@@ -1,0 +1,72 @@
+[project]
+name = "trading-app-backend"
+version = "0.1.0"
+description = "Trading app backend (V1: demo trading)"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.53.0",
+    "sqlalchemy[asyncio]==2.0.54",
+    "asyncpg==0.31.0",
+    "pydantic==2.13.5",
+    "pydantic-settings==2.15.0",
+    "hyperliquid-python-sdk==0.24.0",
+    "lighter-sdk==1.1.6",
+    "alembic==1.20.0",
+    "tzdata==2026.4",
+    "redis==8.1.0",
+    "httpx==0.28.1",
+    "cryptography==50.0.1",
+]
+
+[dependency-groups]
+dev = [
+    "ruff==0.16.8",
+    "mypy==2.3.1",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+]
+
+[tool.uv]
+# lighter-sdk pins urllib3<2.1.0 (OpenAPI-generator boilerplate, not a real
+# incompatibility) - keep the current urllib3 instead of a 2023 release.
+override-dependencies = ["urllib3==2.8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["hyperliquid.*", "lighter.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# The SQLAlchemy async engine in app/db.py is created once at import time and
+# its asyncpg connection pool binds to whichever event loop is running the
+# first time it's used - same as in every real service (one asyncio.run(),
+# one loop, for the process's whole life). pytest-asyncio's default is a new
+# event loop per test *function*, which breaks that: a connection opened
+# under test A's loop can't be reused once that loop is gone, and asyncpg
+# raises "cannot perform operation: another operation is in progress"
+# instead of a clearer loop-mismatch error. test_pipeline.py is a single
+# ordered pipeline sharing one database across its tests by design, so it
+# needs one event loop for the whole run, matching real usage.
+asyncio_default_test_loop_scope = "session"
+asyncio_default_fixture_loop_scope = "session"
+testpaths = ["tests"]

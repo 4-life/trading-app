@@ -1,0 +1,170 @@
+name: trading-app-local
+
+# Shared by every backend service: one image, a different command each. Only
+# `migrate` builds it (it runs first); the rest reuse it instead of building
+# and exporting their own copy.
+x-backend: &backend
+  image: trading-app-local-backend:latest
+  pull_policy: never
+  restart: unless-stopped
+  env_file: "../../.env"
+  environment:
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: 5432
+    REDIS_HOST: redis
+    REDIS_PORT: 6379
+
+x-after-migrate: &after-migrate
+  postgres:
+    condition: service_healthy
+  redis:
+    condition: service_started
+  migrate:
+    condition: service_completed_successfully
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    env_file: "../../.env"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    ports:
+      - "127.0.0.1:5432:5432"  # this machine only, not the network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:8-alpine
+    # Nothing on disk: every start begins empty, so the live auto-trading
+    # switch is off after a restart (docs/redis.md).
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    restart: unless-stopped
+
+  # One-shot: schema migrations - and the build of the shared backend image.
+  migrate:
+    <<: *backend
+    build:
+      context: ../../backend
+      target: runner
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # One-shot: candle/funding history for every paper (docs/market-data.md#historical-backfill).
+  backfill:
+    <<: *backend
+    restart: "no"
+    command: ["python", "-m", "app.market_data.backfill"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # One-shot: historical features from the backfilled candles.
+  feature-backfill:
+    <<: *backend
+    restart: "no"
+    command: ["python", "-m", "app.feature_engine.backfill"]
+    depends_on:
+      backfill:
+        condition: service_completed_successfully
+
+  api:
+    <<: *backend
+    depends_on: *after-migrate
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  dashboard:
+    build: ../../dashboard
+    restart: unless-stopped
+    env_file: "../../.env"
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-3000}:3000"
+
+  market-data:
+    <<: *backend
+    command: ["python", "-m", "app.market_data.run"]
+    depends_on: *after-migrate
+
+  feature-engine:
+    <<: *backend
+    command: ["python", "-m", "app.feature_engine.run"]
+    depends_on:
+      <<: *after-migrate
+      backfill:
+        condition: service_completed_successfully
+
+  vwap-executor:
+    <<: *backend
+    command: ["python", "-m", "app.executors.vwap"]
+    depends_on:
+      <<: *after-migrate
+      feature-backfill:
+        condition: service_completed_successfully
+
+  supertrend-executor:
+    <<: *backend
+    command: ["python", "-m", "app.executors.supertrend"]
+    depends_on:
+      <<: *after-migrate
+      feature-backfill:
+        condition: service_completed_successfully
+
+  trend-executor:
+    <<: *backend
+    command: ["python", "-m", "app.executors.trend"]
+    depends_on:
+      <<: *after-migrate
+      feature-backfill:
+        condition: service_completed_successfully
+
+  regime-executor:
+    <<: *backend
+    command: ["python", "-m", "app.executors.regime"]
+    depends_on:
+      <<: *after-migrate
+      feature-backfill:
+        condition: service_completed_successfully
+
+  # Finds breaking-out coins for scanner papers (docs/papers.md#scanner-papers).
+  scanner:
+    <<: *backend
+    command: ["python", "-m", "app.scanner.run"]
+    depends_on:
+      <<: *after-migrate
+      backfill:
+        condition: service_completed_successfully
+
+  risk-engine:
+    <<: *backend
+    command: ["python", "-m", "app.risk_engine.run"]
+    depends_on: *after-migrate
+
+  execution-engine:
+    <<: *backend
+    command: ["python", "-m", "app.execution_engine.run"]
+    depends_on: *after-migrate
+
+  watchdog:
+    <<: *backend
+    command: ["python", "-m", "app.watchdog.run"]
+    depends_on: *after-migrate
+
+volumes:
+  postgres_data:

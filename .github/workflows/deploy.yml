@@ -1,0 +1,198 @@
+# CI/CD (docs/deployment.md#cicd-github-actions): checks on every push and
+# pull request; on push to main, build + push the images to ghcr.io and
+# deploy them to the VPS over SSH. The VPS is prepared once - with
+# scripts/deploy.sh (which prints the VPS_* secrets) or by hand on an existing
+# server (docs/deployment.md#an-existing-server): a `deploy` user in the
+# `docker` group, Nginx + TLS in front of 127.0.0.1:3000.
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+      - name: Backend - install
+        working-directory: backend
+        run: uv sync --locked
+      - name: Backend - lint, types, unit tests
+        working-directory: backend
+        env:
+          # Settings needs these to import; unit tests don't touch a database.
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy app tests migrations
+          uv run pytest tests --deselect tests/test_pipeline.py
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Dashboard - install and typecheck
+        working-directory: dashboard
+        run: |
+          npm ci
+          npm run typecheck
+
+  build:
+    needs: checks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      backend_image: ${{ steps.names.outputs.backend }}
+      dashboard_image: ${{ steps.names.outputs.dashboard }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Image names
+        id: names
+        run: |
+          prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "backend=$prefix-backend:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "dashboard=$prefix-dashboard:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "backend_latest=$prefix-backend:latest" >> "$GITHUB_OUTPUT"
+          echo "dashboard_latest=$prefix-dashboard:latest" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Backend image
+        uses: docker/build-push-action@v7
+        with:
+          context: backend
+          target: runner
+          push: true
+          tags: |
+            ${{ steps.names.outputs.backend }}
+            ${{ steps.names.outputs.backend_latest }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+      - name: Dashboard image
+        uses: docker/build-push-action@v7
+        with:
+          context: dashboard
+          push: true
+          tags: |
+            ${{ steps.names.outputs.dashboard }}
+            ${{ steps.names.outputs.dashboard_latest }}
+          cache-from: type=gha,scope=dashboard
+          cache-to: type=gha,mode=max,scope=dashboard
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_PORT: ${{ secrets.VPS_PORT }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      # The deploy user's own directory by default - it needs no root to write there.
+      APP_DIR: ${{ vars.APP_DIR || '/home/deploy/trading-app' }}
+      DOMAIN: ${{ vars.DOMAIN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: SSH key
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "$VPS_PORT" "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Write .env
+        env:
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+          SETTINGS_ENCRYPTION_KEY: ${{ secrets.SETTINGS_ENCRYPTION_KEY }}
+          ASSETS: ${{ vars.ASSETS || '["BTC","ETH","SOL"]' }}
+          BACKFILL_DAYS: ${{ vars.BACKFILL_DAYS || '220' }}
+          RAW_DATA_RETENTION_HOURS: ${{ vars.RAW_DATA_RETENTION_HOURS || '24' }}
+          BACKEND_IMAGE: ${{ needs.build.outputs.backend_image }}
+          DASHBOARD_IMAGE: ${{ needs.build.outputs.dashboard_image }}
+        run: |
+          umask 077
+          {
+            printf 'POSTGRES_USER=%s\n' "$POSTGRES_USER"
+            printf 'POSTGRES_PASSWORD=%s\n' "$POSTGRES_PASSWORD"
+            printf 'POSTGRES_DB=%s\n' "$POSTGRES_DB"
+            printf 'APP_PASSWORD=%s\n' "$APP_PASSWORD"
+            printf 'SETTINGS_ENCRYPTION_KEY=%s\n' "$SETTINGS_ENCRYPTION_KEY"
+            printf 'ASSETS=%s\n' "$ASSETS"
+            printf 'BACKFILL_DAYS=%s\n' "$BACKFILL_DAYS"
+            printf 'RAW_DATA_RETENTION_HOURS=%s\n' "$RAW_DATA_RETENTION_HOURS"
+            printf 'BACKEND_IMAGE=%s\n' "$BACKEND_IMAGE"
+            printf 'DASHBOARD_IMAGE=%s\n' "$DASHBOARD_IMAGE"
+            printf 'API_URL=http://api:8000\n'
+          } > deploy.env
+
+      - name: Ship config
+        run: |
+          ssh -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" "mkdir -p '$APP_DIR/docker/production'"
+          scp -P "$VPS_PORT" deploy.env "$VPS_USER@$VPS_HOST:$APP_DIR/.env"
+          scp -P "$VPS_PORT" docker/production/compose.yaml \
+            "$VPS_USER@$VPS_HOST:$APP_DIR/docker/production/compose.yaml"
+
+      - name: Deploy
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ssh -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
+            GHCR_USER="${{ github.actor }}" GHCR_TOKEN="$GHCR_TOKEN" APP_DIR="$APP_DIR" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd "$APP_DIR"
+          # The deploy user is in the docker group: plain docker.
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          compose() { docker compose --env-file .env -f docker/production/compose.yaml "$@"; }
+          compose pull
+          # Deploy-aware alerts (docs/watchdog.md#deploys): held from here until the
+          # watchdog's summary after the finish. Fails harmlessly on a first deploy
+          # (no database yet); the finish runs even if the deploy fails.
+          deploy_marker() {
+            compose run --rm --no-deps -T migrate python -m app.system.deploy "$1" >/dev/null 2>&1 \
+              || echo "(deploy $1 not recorded - no database yet?)"
+          }
+          deploy_marker start
+          trap 'deploy_marker finish' EXIT
+          # Migrations and backfill run first, via the dependency graph.
+          compose up -d --remove-orphans
+          docker logout ghcr.io
+          docker image prune -f
+          compose ps
+          REMOTE
+
+      - name: Health check
+        if: env.DOMAIN != ''
+        run: |
+          # The dashboard answers (its login page) once the stack is up.
+          for _ in $(seq 30); do
+            curl -fsS -o /dev/null "https://$DOMAIN/login" && exit 0
+            sleep 10
+          done
+          echo "https://$DOMAIN/login didn't answer within 5 minutes" >&2
+          exit 1
