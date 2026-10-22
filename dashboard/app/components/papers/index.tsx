@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Paper } from "@/types/paper";
 
 import { BatchSweepDialog } from "./batch-sweep-dialog";
-import { CreatePaperDialog } from "./create-paper-dialog";
+import { CreatePaperDialog } from "./create-paper-modal";
 import { usePaperFilter } from "./hooks/use-paper-filter";
 import { filterPapers, knownFilter, PapersFilters } from "./papers-filters";
 import { PapersTable } from "./papers-table";

@@ -43,7 +43,9 @@ export function AveragingPositions({ positions }: { positions: BacktestTrade[] }
               <TableRow key={t.opened_at}>
                 <TableCell>{k + 1}</TableCell>
                 <TableCell>{formatDateTime(t.opened_at)}</TableCell>
-                <TableCell>{open ? "still open" : formatDateTime(t.closed_at)}</TableCell>
+                <TableCell>
+                  {open ? `test end ${formatDateTime(t.closed_at)}` : formatDateTime(t.closed_at)}
+                </TableCell>
                 <TableCell>
                   {addCount(t)} / {sellCount(t)}
                 </TableCell>

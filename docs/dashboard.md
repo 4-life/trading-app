@@ -4,6 +4,8 @@ Docker service: `dashboard`
 
 React, server-side rendered (SSR). Dark theme. Talks only to the [api](api.md). Protected by the app password (see [README: Security](../README.md#security)).
 
+On phones (under 640 px) buttons, inputs and checkboxes are larger touch targets, inputs at 16 px text (iOS zooms into smaller ones); wide tables (the sweep results) scroll sideways.
+
 ## Login
 
 `/login` asks for the app password and exchanges it for an API token ([api: Authentication](api.md#authentication)), kept in an HTTP-only `session` cookie (7 days). Without a valid token every page redirects to `/login`. The cookie is `Secure` in production, so the dashboard must be served over HTTPS (see [deployment](deployment.md)).
@@ -34,7 +36,7 @@ Equity, Available Balance, Open Positions, Exposure, Total PnL, Unrealized PnL, 
 
 ## Demo Cards
 
-The same cards for demo mode, in a different style. No auto-trading switch; a **Reset** button instead (see [papers: Demo Reset](papers.md#demo-reset)).
+The same cards for demo mode, smaller than the live ones and on a light sky tint — not real money. No auto-trading switch; a **Reset** button instead (see [papers: Demo Reset](papers.md#demo-reset)).
 
 ## Papers
 
@@ -79,7 +81,7 @@ A [Lightweight Charts](https://github.com/tradingview/lightweight-charts) (Tradi
 - **VWAP + EMA 9** — the [VWAP](vwap-strategy-engine.md#lines) (orange) and EMA 9 (blue) lines and the [BUY / SELL signals](vwap-strategy-engine.md#signals) as arrows (blue BUY under the candle, red SELL above it), computed exactly as the VWAP executor does. The VWAP strategy trades them; elsewhere they're for reference.
 - **Trend bands** — the [BigBeluga bands](regime-strategy-engine.md#trend-bands), computed over the last 5000 candles exactly as the Regime executor does: the active band as a line (green lower band while bullish, red upper band while bearish; none before the first cross), its value zone's edge dotted, and `BRK` arrows for break-ups (green, under the candle) / break-downs (red, above it).
 - **Positions** — a separate dashed line per position from entry to exit (or to the last close while open), green long, red short — trades never join each other; a circle at every fill's price labelled with the position id (blue = open, amber = close, partial closes included). An open position also gets its entry, SL and TP as horizontal lines. Position details are in the [positions](#positions-table) table.
-- **Backtest** (temporary, VWAP and Regime papers) — the paper's backtest ([VWAP](vwap-strategy-engine.md#backtest), [Regime](regime-strategy-engine.md#backtest)) trades as separate dashed lines (entry → exit; green long, red short) with small violet circles at each entry and exit; totals above the chart — % of price, compounded at the paper's leverage with the max drawdown, the same at 1× / 3× / 5× / 10× side by side (the paper's leverage in bold), and per month.
+- **Backtest** (temporary, VWAP and Regime papers) — the paper's backtest ([VWAP](vwap-strategy-engine.md#backtest), [Regime](regime-strategy-engine.md#backtest)) trades as separate dashed lines (entry → exit; green long, red short) with small violet circles at each entry and exit — an averaging position still open when the backtest ended stops at the test's last candle with a grey square "test end <result>" there instead of a close (its hover box, the summary and the backtest log say "at the test end", not a live unrealized position); totals above the chart — % of price, compounded at the paper's leverage with the max drawdown, the same at 1× / 3× / 5× / 10× side by side (the paper's leverage in bold), and per month.
 - While the paper is being prepared, a loader with the step (backfilling / backtesting) replaces the chart.
 - Refreshes with the page (15 s). Rendered in the browser only; the chart code is a separate bundle loaded with the card.
 

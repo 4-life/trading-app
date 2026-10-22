@@ -200,7 +200,13 @@ function tradesAt(chart: PaperChart, t: number): InfoRow[] {
   for (const b of chart.backtest.filter((x) => during(x.opened_at, x.closed_at))) {
     const ret = Number(b.return_pct);
     rows.push({ text: `backtest ${b.direction}`, color: color(b.direction) });
-    rows.push({ text: when(b.opened_at, b.closed_at) });
+    // Still open when the backtest ended: its last candle is the test's end, not a close.
+    const ended = b.exit_reason === OPEN_AT_END;
+    rows.push({
+      text: ended
+        ? `opened ${formatDateTime(b.opened_at)} · test ended ${formatDateTime(b.closed_at)}`
+        : when(b.opened_at, b.closed_at),
+    });
     if (b.margin_usd !== null && b.pnl_usd !== null) {
       // An averaging position: its buys, its peak margin and the result in $.
       const pnl = Number(b.pnl_usd);
@@ -235,10 +241,9 @@ function tradesAt(chart: PaperChart, t: number): InfoRow[] {
           });
         }
       }
-      const open = b.exit_reason === OPEN_AT_END;
       rows.push({
         text:
-          `${open ? 'unrealized ' : ''}${formatUsd(String(pnl))} ` +
+          `${ended ? 'at the test end ' : ''}${formatUsd(String(pnl))} ` +
           `(${((pnl / margin) * 100).toFixed(1)}% of margin)`,
         color: result(pnl),
       });
@@ -250,7 +255,7 @@ function tradesAt(chart: PaperChart, t: number): InfoRow[] {
           color: result(shorts),
         });
       }
-      rows.push({ text: `${b.entry_reason ?? '—'} → ${open ? 'still open' : b.exit_reason}` });
+      rows.push({ text: `${b.entry_reason ?? '—'} → ${ended ? 'open at the test end' : b.exit_reason}` });
       // The fills on this candle, each with the position right after it.
       const profits = unitProfits(b);
       b.fills.forEach((f, k) => {
@@ -583,8 +588,24 @@ function draw(api: IChartApi, chart: PaperChart): (data: PaperChart) => void {
           text: `${k === 0 ? '' : '+'}$${String(Number(f.margin_usd))}`,
         });
       });
-      // A position still open on the last candle has no close to mark.
+      // A position still open when the backtest ended has no close: a grey
+      // square at the test's last candle instead, with its result there.
       const open = t.exit_reason === OPEN_AT_END;
+      if (open && sec(t.closed_at) >= first) {
+        const result =
+          t.pnl_usd !== null
+            ? formatUsd(t.pnl_usd)
+            : `${Number(t.return_pct) >= 0 ? '+' : ''}${Number(t.return_pct).toFixed(2)}%`;
+        markers.push({
+          time: onCandle(t.closed_at) as UTCTimestamp,
+          position: 'atPriceMiddle',
+          price: Number(t.close_price),
+          shape: 'square',
+          color: MUTED,
+          size: 0.7,
+          text: `test end ${result}`,
+        });
+      }
       const points: (readonly [string, string])[] =
         t.fills.length > 0
           ? open

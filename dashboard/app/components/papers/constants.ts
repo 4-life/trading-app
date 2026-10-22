@@ -11,6 +11,8 @@ export const EXECUTORS: Record<string, readonly string[]> = {
 // The stats the runs can be sorted by (the API's `sort`), as [key, label].
 export const SWEEP_SORTS = [
   ["total_usd", "Total PnL"],
+  // The fewest give-ups (liquidations too), the best total PnL among them.
+  ["safest_total", "PnL + give-ups"],
   ["test_pnl_usd", "Test PnL"],
   ["train_pnl_usd", "Train PnL"],
   ["closed_pnl_usd", "Closed PnL"],
@@ -29,7 +31,7 @@ export const EXIT_SWEEP_SORTS = [
   ["liquidations", "Liquidations"],
 ] as const;
 
-// "Find best params" (sweep-panel.tsx): the inputs' defaults, the poll while a
+// "Find best params" (edit-paper-modal/sweep-panel.tsx): the inputs' defaults, the poll while a
 // sweep runs, and the stats lower is better for (higher for the rest).
 export const SWEEP_DEFAULT_MAX_LEVERAGE = 100;
 export const SWEEP_DEFAULT_MAX_MARGIN = 1000;

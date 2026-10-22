@@ -13,6 +13,8 @@ export function DemoSection({ demo }: Pick<HomeData, "demo">) {
           portfolio={portfolio}
           accent="border-l-sky-500"
           action={<ResetButton />}
+          // Smaller and tinted: not real money, below the live summary in weight.
+          compact
         />
       )}
     </Section>

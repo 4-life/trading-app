@@ -11,15 +11,17 @@ export function StatsCard({
   portfolio,
   accent,
   action,
+  compact = false,
 }: {
   title: string;
   portfolio: Portfolio | null;
   accent: string;
   action?: ReactNode;
+  compact?: boolean; // smaller cards (demo)
 }) {
   const stats = portfolio?.stats ?? null;
   return (
-    <Card className={`border-l-4 ${accent}`}>
+    <Card size={compact ? "sm" : "default"} className={`border-l-4 ${accent} ${compact ? "" : "bg-muted/5"}`}>
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
         <CardTitle>{title}</CardTitle>
         {action}
@@ -30,7 +32,7 @@ export function StatsCard({
         ) : !portfolio.live_data || stats === null ? (
           <p className="text-sm text-muted-foreground">no live data</p>
         ) : (
-          <StatsGrid stats={stats} />
+          <StatsGrid stats={stats} compact={compact} />
         )}
       </CardContent>
     </Card>

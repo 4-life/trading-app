@@ -10,9 +10,9 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
-from sqlalchemy import asc, delete, desc, select, update
+from sqlalchemy import ColumnElement, asc, delete, desc, select, update
 
 from app.backtest.exit_sweep import ExitSweepPlan, plan_exit_sweep, run_exit_sweep
 from app.backtest.models import ExitSweepRun, PaperSweep, SweepBatch, SweepRun
@@ -30,7 +30,11 @@ from app.papers.models import AVERAGING_KINDS, Paper
 logger = logging.getLogger(__name__)
 
 # The stats the runs can be sorted by (SweepRun's columns).
+# SAFEST_TOTAL isn't a stat: the fewest give-ups (liquidations counted in), the
+# best total among them (sweep_runs).
+SAFEST_TOTAL = "safest_total"
 SweepSort = Literal[
+    "safest_total",
     "total_usd",
     "closed_pnl_usd",
     "open_unrealized_usd",
@@ -423,14 +427,21 @@ async def sweep_runs(
     limit: int,
     compound: bool = False,
 ) -> list[SweepRun]:
-    """The sweep's runs so far with compounding on / off, sorted by `sort`."""
-    column = getattr(SweepRun, sort)
-    direction = desc if order == "desc" else asc
+    """The sweep's runs so far with compounding on / off, sorted by `sort`
+    (SAFEST_TOTAL: its own order, `order` aside)."""
+    ordering: list[ColumnElement[Any]]
+    if sort == SAFEST_TOTAL:
+        ordering = [
+            (SweepRun.give_ups + SweepRun.liquidations).asc(),
+            SweepRun.total_usd.desc(),
+        ]
+    else:
+        ordering = [(desc if order == "desc" else asc)(getattr(SweepRun, sort))]
     async with async_session() as session:
         rows = await session.scalars(
             select(SweepRun)
             .where(SweepRun.sweep_id == sweep_id, SweepRun.compound == compound)
-            .order_by(direction(column), SweepRun.id)
+            .order_by(*ordering, SweepRun.id)
             .limit(limit)
         )
         return list(rows.all())

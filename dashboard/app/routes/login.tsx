@@ -40,7 +40,7 @@ export default function Login() {
               placeholder="Password"
               autoFocus
               required
-              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm max-sm:h-11 max-sm:text-base"
             />
             {data?.error && <p className="text-sm text-destructive">{data.error}</p>}
             <Button type="submit" className="w-full" disabled={submitting}>

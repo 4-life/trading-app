@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Paper } from "@/types/paper";
 import type { PaperSweep, SweepStatus } from "@/types/sweep";
 
-import { SWEEP_ASCENDING, SWEEP_POLL_MS } from "../constants";
+import { SWEEP_ASCENDING, SWEEP_POLL_MS } from "../../constants";
 
 // A paper's settings sweep, its best runs so far by `sort` and the sweep
 // running on the server (/sweep-status): loaded on open, on a new sort and

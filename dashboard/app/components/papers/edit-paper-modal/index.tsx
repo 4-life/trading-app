@@ -18,8 +18,8 @@ import { AVERAGING_KINDS } from '@/constants/papers';
 import type { ActionResult } from '@/types/action';
 import type { Paper } from '@/types/paper';
 
-import { PaperExitsFields } from './paper-exits-fields';
-import { PositionManagementFields } from './position-management-fields';
+import { PaperExitsFields } from '../paper-exits-fields';
+import { PositionManagementFields } from '../position-management-fields';
 import { SweepPanel } from './sweep-panel';
 
 // Edits the leverage (only without an open position) and, for an averaging

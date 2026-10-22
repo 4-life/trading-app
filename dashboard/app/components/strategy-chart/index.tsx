@@ -151,7 +151,7 @@ function AveragingSummary({ chart }: { chart: PaperChart }) {
           </span>{" "}
           = closed <span className={tone(net)}>{usd(net)}</span> + open{" "}
           <span className={tone(Number(open.pnl_usd ?? 0))}>{usd(Number(open.pnl_usd ?? 0))}</span>{" "}
-          (unrealized).
+          (unrealized, valued at the test end).
         </p>
       )}
       <p className="flex flex-wrap gap-x-3">
@@ -165,7 +165,7 @@ function AveragingSummary({ chart }: { chart: PaperChart }) {
   );
 }
 
-// The averaging backtest's position still open on the last candle.
+// The averaging backtest's position still open when the backtest ended (its last candle).
 function OpenPosition({ position }: { position: BacktestTrade }) {
   const pnl = Number(position.pnl_usd ?? 0);
   const shorts = position.hedge_pnl_usd === null ? null : Number(position.hedge_pnl_usd);
@@ -173,10 +173,11 @@ function OpenPosition({ position }: { position: BacktestTrade }) {
   const value = positionValue(position);
   return (
     <p className="text-foreground">
-      Open now: since {position.opened_at.slice(0, 10)}, {addCount(position)}{" "}
+      Open at the test end ({position.closed_at.slice(0, 10)}): since {position.opened_at.slice(0, 10)},{" "}
+      {addCount(position)}{" "}
       adds, avg {Number(position.entry_price).toFixed(2)} → {Number(position.close_price).toFixed(2)},
       position ${value.entry.toFixed(2)} → ${value.close.toFixed(2)}, peak margin ${margin.toFixed(2)},
-      unrealized <span className={tone(pnl)}>{usd(pnl)}</span> (
+      unrealized there <span className={tone(pnl)}>{usd(pnl)}</span> (
       <span className={tone(pnl)}>{signed(margin > 0 ? (pnl / margin) * 100 : 0)}</span>)
       {shorts !== null && (
         <>
@@ -231,9 +232,10 @@ export function StrategyChartCard({
         <CardTitle>
           Chart{chart ? ` — ${chart.asset} ${chart.timeframe} ${chart.kind} / ${chart.executor}` : ""}
         </CardTitle>
+        {/* Never wider than the card: a long option is cut, its full text in the open list. */}
         <select
           aria-label="Paper"
-          className={FIELD_CLASS}
+          className={`${FIELD_CLASS} w-full min-w-0 truncate sm:w-auto sm:max-w-md`}
           value={picked ?? chart?.paper_id ?? ""}
           onChange={(e) => {
             const next = new URLSearchParams(params);

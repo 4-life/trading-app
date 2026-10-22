@@ -15,7 +15,7 @@ import {
   SWEEP_DEFAULT_MAX_LEVERAGE,
   SWEEP_DEFAULT_MAX_MARGIN,
   SWEEP_SORTS,
-} from "./constants";
+} from "../constants";
 import { ExitRunsTable } from "./exit-runs-table";
 import { useSweepStatus } from "./hooks/use-sweep-status";
 
@@ -126,7 +126,8 @@ export function SweepPanel({ paper }: { paper: Paper }) {
             {sweep.start && sweep.end
               ? ` · ${sweep.start} → ${sweep.end}, train before ${sweep.split ?? "—"}`
               : ""}
-            {` · max x${String(Number(sweep.max_leverage))}`}
+            {/* The asset's max can be 1 / its margin share (×30.03): rounded down, one decimal at most. */}
+            {` · max ×${String(Math.floor(Number(sweep.max_leverage) * 10) / 10)}`}
             {sweep.max_margin === null ? "" : `, max margin ${formatUsd(sweep.max_margin)}`}
           </p>
           {runs.length > 0 && (

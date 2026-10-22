@@ -6,7 +6,7 @@ import { isPreparing } from "@/lib/papers";
 import type { ActionResult } from "@/types/action";
 import type { Paper } from "@/types/paper";
 
-import { EditPaperDialog } from "./edit-paper-dialog";
+import { EditPaperDialog } from "./edit-paper-modal";
 
 export function PaperActions({ paper }: { paper: Paper }) {
   const fetcher = useFetcher<ActionResult>();

@@ -6,10 +6,10 @@ import { FIELD_CLASS } from "@/lib/styles";
 import { ASSET_KINDS, AVERAGING_KINDS } from "@/constants/papers";
 import type { ActionResult } from "@/types/action";
 
-import { EXECUTORS, SCANNER_EXECUTORS, TIMEFRAMES } from "./constants";
-import { PaperExitsFields } from "./paper-exits-fields";
-import { PositionManagementFields } from "./position-management-fields";
-import { Select } from "./select";
+import { EXECUTORS, SCANNER_EXECUTORS, TIMEFRAMES } from "../constants";
+import { PaperExitsFields } from "../paper-exits-fields";
+import { PositionManagementFields } from "../position-management-fields";
+import { Select } from "../select";
 
 export function CreatePaperForm({
   assets,
