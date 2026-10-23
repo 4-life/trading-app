@@ -13,6 +13,8 @@ export const SWEEP_SORTS = [
   ["total_usd", "Total PnL"],
   // The fewest give-ups (liquidations too), the best total PnL among them.
   ["safest_total", "PnL + give-ups"],
+  // The most winning positions, the best total PnL among them.
+  ["most_won_total", "PnL + wins"],
   ["test_pnl_usd", "Test PnL"],
   ["train_pnl_usd", "Train PnL"],
   ["closed_pnl_usd", "Closed PnL"],
@@ -39,5 +41,14 @@ export const SWEEP_POLL_MS = 5000;
 export const SWEEP_ASCENDING: readonly string[] = ["give_ups", "most_margin_usd", "liquidations"];
 
 // The papers table's filter (hooks/use-paper-filter.ts): none, and this browser's key.
-export const NO_FILTER = { kind: "", executor: "", asset: "", enabledOnly: false, liveOnly: false } as const;
+export const NO_FILTER = {
+  kind: "",
+  executor: "",
+  asset: "",
+  enabledOnly: false,
+  liveOnly: false,
+  favouritesOnly: false,
+} as const;
 export const PAPER_FILTER_KEY = "papers-filter";
+// The favourite papers' ids in this browser (hooks/use-favourite-papers.ts).
+export const FAVOURITE_PAPERS_KEY = "papers-favourites";

@@ -3,14 +3,11 @@ import type { SweepRun } from "@/types/sweep";
 
 const tone = (x: number) => (x >= 0 ? "text-green-500" : "text-red-500");
 
-// No position closed over the whole period - its total is the open one's,
-// unrealized: train / test and won have nothing to show.
 const stillOpen = (r: SweepRun) => r.positions === 0 && r.open_unrealized_usd !== 0;
 
 // An averaging paper's sweep runs (docs/papers.md#averaging-papers).
 export function AveragingRunsTable({ runs }: { runs: SweepRun[] }) {
   return (
-    // Wider than a phone: it scrolls sideways, the columns kept on one line.
     <div className="overflow-x-auto">
       <table className="w-full whitespace-nowrap [&_td]:pr-3 [&_th]:pr-3">
         <thead className="text-muted-foreground">
@@ -30,7 +27,13 @@ export function AveragingRunsTable({ runs }: { runs: SweepRun[] }) {
           {runs.map((r, k) => (
             <tr key={k}>
               <td>{`×${String(r.leverage)}`}</td>
-              <td>{formatUsd(String(r.initial_size_usd))}</td>
+              <td>
+                {r.initial_size_usd.toLocaleString("en-US", {
+                  style: "currency",
+                  currency: "USD",
+                  maximumFractionDigits: 0,
+                })}
+              </td>
               <td>{`${String(Math.round(r.take_profit_pct * 1000) / 10)}%`}</td>
               <td>{r.intraday ? (r.reopen ? "intraday-reopen" : "intraday") : "hold"}</td>
               <td className={tone(r.total_usd)}>{formatUsd(String(r.total_usd))}</td>

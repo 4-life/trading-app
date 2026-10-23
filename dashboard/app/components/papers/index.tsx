@@ -3,6 +3,7 @@ import type { Paper } from "@/types/paper";
 
 import { BatchSweepDialog } from "./batch-sweep-dialog";
 import { CreatePaperDialog } from "./create-paper-modal";
+import { useFavouritePapers } from "./hooks/use-favourite-papers";
 import { usePaperFilter } from "./hooks/use-paper-filter";
 import { filterPapers, knownFilter, PapersFilters } from "./papers-filters";
 import { PapersTable } from "./papers-table";
@@ -10,8 +11,9 @@ import { PapersTable } from "./papers-table";
 // docs/dashboard.md#papers
 export function PapersCard({ papers, assets }: { papers: Paper[] | null; assets: string[] }) {
   const [saved, change] = usePaperFilter();
+  const [favourites, toggleFavourite] = useFavouritePapers();
   const filter = papers === null ? saved : knownFilter(papers, saved);
-  const shown = papers === null ? [] : filterPapers(papers, filter);
+  const shown = papers === null ? [] : filterPapers(papers, filter, favourites);
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
@@ -32,7 +34,7 @@ export function PapersCard({ papers, assets }: { papers: Paper[] | null; assets:
             {shown.length === 0 ? (
               <p className="text-sm text-muted-foreground">No papers match the filter</p>
             ) : (
-              <PapersTable papers={shown} />
+              <PapersTable papers={shown} favourites={favourites} onToggleFavourite={toggleFavourite} />
             )}
           </>
         )}

@@ -30,11 +30,14 @@ from app.papers.models import AVERAGING_KINDS, Paper
 logger = logging.getLogger(__name__)
 
 # The stats the runs can be sorted by (SweepRun's columns).
-# SAFEST_TOTAL isn't a stat: the fewest give-ups (liquidations counted in), the
-# best total among them (sweep_runs).
+# Not stats - rankings of their own (sweep_runs), `order` aside: the fewest
+# give-ups (liquidations counted in) / the most winning positions, each with
+# the best total among them.
 SAFEST_TOTAL = "safest_total"
+MOST_WON_TOTAL = "most_won_total"
 SweepSort = Literal[
     "safest_total",
+    "most_won_total",
     "total_usd",
     "closed_pnl_usd",
     "open_unrealized_usd",
@@ -428,15 +431,15 @@ async def sweep_runs(
     compound: bool = False,
 ) -> list[SweepRun]:
     """The sweep's runs so far with compounding on / off, sorted by `sort`
-    (SAFEST_TOTAL: its own order, `order` aside)."""
-    ordering: list[ColumnElement[Any]]
-    if sort == SAFEST_TOTAL:
-        ordering = [
+    (SAFEST_TOTAL, MOST_WON_TOTAL: their own order, `order` aside)."""
+    rankings: dict[str, list[ColumnElement[Any]]] = {
+        SAFEST_TOTAL: [
             (SweepRun.give_ups + SweepRun.liquidations).asc(),
             SweepRun.total_usd.desc(),
-        ]
-    else:
-        ordering = [(desc if order == "desc" else asc)(getattr(SweepRun, sort))]
+        ],
+        MOST_WON_TOTAL: [SweepRun.won.desc(), SweepRun.total_usd.desc()],
+    }
+    ordering = rankings.get(sort) or [(desc if order == "desc" else asc)(getattr(SweepRun, sort))]
     async with async_session() as session:
         rows = await session.scalars(
             select(SweepRun)

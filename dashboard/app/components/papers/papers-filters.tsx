@@ -13,14 +13,15 @@ export function knownFilter(papers: Paper[], filter: PaperFilter): PaperFilter {
   return { ...filter, kind: known("kind"), executor: known("executor"), asset: known("asset") };
 }
 
-export function filterPapers(papers: Paper[], filter: PaperFilter): Paper[] {
+export function filterPapers(papers: Paper[], filter: PaperFilter, favourites: Set<number>): Paper[] {
   return papers.filter(
     (p) =>
       (!filter.kind || p.kind === filter.kind) &&
       (!filter.executor || p.executor === filter.executor) &&
       (!filter.asset || p.asset === filter.asset) &&
       (!filter.enabledOnly || p.enabled) &&
-      (!filter.liveOnly || p.mode === "live"),
+      (!filter.liveOnly || p.mode === "live") &&
+      (!filter.favouritesOnly || favourites.has(p.id)),
   );
 }
 
@@ -33,10 +34,11 @@ const FIELDS = [
 const TOGGLES = [
   ["enabledOnly", "Enabled only"],
   ["liveOnly", "Live only"],
+  ["favouritesOnly", "Favourites only"],
 ] as const;
 
 // A select per field: "all", then every value the papers have; a toggle
-// for enabled papers only and one for live papers only.
+// for enabled papers only, one for live papers only, one for favourites only.
 export function PapersFilters({
   papers,
   filter,

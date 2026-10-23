@@ -12,6 +12,7 @@ function loadFilter(): PaperFilter {
       asset: typeof saved.asset === "string" ? saved.asset : "",
       enabledOnly: saved.enabledOnly === true,
       liveOnly: saved.liveOnly === true,
+      favouritesOnly: saved.favouritesOnly === true,
     };
   } catch {
     return NO_FILTER;

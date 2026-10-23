@@ -1,4 +1,7 @@
+import { StarIcon } from "lucide-react";
+
 import { TruncatedText } from "@/components/truncated-text";
+import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { giveUp } from "@/lib/averaging";
 import { formatPercent, formatUsd, pnlClass } from "@/lib/format";
@@ -81,10 +84,38 @@ function BacktestNet({ paper }: { paper: Paper }) {
   );
 }
 
-export function PaperRow({ paper }: { paper: Paper }) {
+// The star marking the paper as a favourite in this browser.
+function FavouriteStar({ favourite, onToggle }: { favourite: boolean; onToggle: () => void }) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      aria-label={favourite ? "Remove from favourites" : "Add to favourites"}
+      aria-pressed={favourite}
+      onClick={onToggle}
+    >
+      <StarIcon className={favourite ? "fill-amber-400 text-amber-400" : "text-muted-foreground"} />
+    </Button>
+  );
+}
+
+export function PaperRow({
+  paper,
+  favourite,
+  onToggleFavourite,
+}: {
+  paper: Paper;
+  favourite: boolean;
+  onToggleFavourite: () => void;
+}) {
   return (
     <TableRow className={paper.enabled ? undefined : "opacity-60"}>
-      <TableCell>{paper.id}</TableCell>
+      <TableCell>
+        <div className="flex items-center gap-1">
+          <FavouriteStar favourite={favourite} onToggle={onToggleFavourite} />
+          {paper.id}
+        </div>
+      </TableCell>
       <TableCell>
         <TruncatedText text={`${paper.kind} / ${paper.executor}`} className="max-w-48" />
       </TableCell>
