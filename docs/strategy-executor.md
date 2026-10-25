@@ -23,7 +23,7 @@ Each executor is a dedicated, hardcoded strategy. Strategies are replaceable com
 - An [averaging paper](papers.md#averaging-papers)'s position management (take-profit, give-up, averaging down) runs in the shared loop, ahead of the strategy, for every executor: the strategy only decides its entries; the open position is managed by the paper's parameters.
 - A paper with an order in flight (`pending` / `approved`) gets no new signal until it's resolved. The same signal (enter / exit, direction, reason) is queued at most once per candle.
 - Open no new positions while the risk engine blocks this executor or paper, the [watchdog](watchdog.md#kill-switch) kill switch is active, or the paper's `direction` doesn't allow it. Open positions keep being managed (exits still run).
-- Skip **live** papers entirely — no entries, no exits — while the dashboard's [auto-trading switch](dashboard.md#live-cards) is off (it's off after every start).
+- Place nothing for **live** papers — no entries, no exits — while the dashboard's [auto-trading switch](dashboard.md#live-cards) is off (it's off after every start): each signal is still logged to the decision log, as `rejected_by_risk` with reason "live auto-trading off" (once per signal per candle; turned on mid-candle, the candle's signal still goes through).
 
 ## Order Flow
 

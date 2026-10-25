@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 Direction = Literal["long", "short"]
 
+# A live paper's signal while the live auto-trading switch is off
+# (docs/strategy-executor.md): recorded as rejected, never placed.
+AUTO_TRADING_OFF = "live auto-trading off"
+
 
 @dataclass(frozen=True)
 class Signal:
@@ -49,11 +53,10 @@ async def _feature_snapshot(asset: str, timeframe: str) -> dict[str, float]:
         return {name: float(value) for name, value in rows.all()}
 
 
-async def queue_decision(paper: Paper, signal: Signal, price: Decimal | None) -> int:
-    """Inserts a `pending` decision (an order request) and returns its id.
-    Raises sqlalchemy's IntegrityError if the paper already has one in
-    flight."""
-    decision = TradingDecision(
+async def _decision(
+    paper: Paper, signal: Signal, price: Decimal | None, outcome: str
+) -> TradingDecision:
+    return TradingDecision(
         decided_at=datetime.now(UTC),
         paper_id=paper.id,
         mode=paper.mode,
@@ -66,8 +69,15 @@ async def queue_decision(paper: Paper, signal: Signal, price: Decimal | None) ->
         stop_loss_price=signal.stop_loss_price,
         take_profit_price=signal.take_profit_price,
         close_fraction=signal.close_fraction,
-        outcome="pending",
+        outcome=outcome,
     )
+
+
+async def queue_decision(paper: Paper, signal: Signal, price: Decimal | None) -> int:
+    """Inserts a `pending` decision (an order request) and returns its id.
+    Raises sqlalchemy's IntegrityError if the paper already has one in
+    flight."""
+    decision = await _decision(paper, signal, price, "pending")
     async with async_session() as session:
         session.add(decision)
         await session.commit()
@@ -80,5 +90,28 @@ async def queue_decision(paper: Paper, signal: Signal, price: Decimal | None) ->
         signal.signal,
         signal.direction,
         signal.reason,
+    )
+    return decision.id
+
+
+async def reject_decision(paper: Paper, signal: Signal, price: Decimal | None, reason: str) -> int:
+    """Logs a signal that never reaches the queue - rejected (`rejected_by_risk`)
+    for `reason` before it's queued - and returns its id."""
+    decision = await _decision(paper, signal, price, "rejected_by_risk")
+    decision.risk_approved = False
+    decision.risk_reason = reason
+    async with async_session() as session:
+        session.add(decision)
+        await session.commit()
+    logger.info(
+        "paper %d (%s %s %s): rejected %s %s - %s: %s",
+        paper.id,
+        paper.asset,
+        paper.timeframe,
+        paper.mode,
+        signal.signal,
+        signal.direction,
+        signal.reason,
+        reason,
     )
     return decision.id

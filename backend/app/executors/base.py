@@ -3,8 +3,10 @@
 Every EXECUTOR_POLL_SECONDS, for each enabled paper of this executor: skip it
 while it has an order in flight, otherwise ask the strategy for a signal and
 queue it as a `pending` trading decision (the order queue - see
-app/execution_engine/models.py's TradingDecision). The risk engine and the
-execution engine take it from there. Executors never size or place orders.
+app/execution_engine/models.py's TradingDecision) - a live paper's, while the
+live auto-trading switch is off, is logged as rejected instead. The risk
+engine and the execution engine take it from there. Executors never size or
+place orders.
 """
 
 import logging
@@ -13,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Protocol
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, select
 
 from app.config import settings
 from app.db import async_session
@@ -36,7 +38,7 @@ from app.executors.position_management import (
 from app.feature_engine.models import Feature
 from app.market_data.limits import market_limits
 from app.market_data.models import Candle, Trade
-from app.order_queue import Direction, Signal, queue_decision
+from app.order_queue import AUTO_TRADING_OFF, Direction, Signal, queue_decision, reject_decision
 from app.papers.models import TRADING_KINDS, Paper
 from app.risk_engine.blocks import is_entry_blocked
 from app.scheduling import sleep_until_next
@@ -215,7 +217,14 @@ async def _open_position(paper_id: int) -> Position | None:
     return position
 
 
-async def _already_queued(paper: Paper, signal: Signal) -> bool:
+def _holding_back(switched_off: bool) -> list[ColumnElement[bool]]:
+    """A signal rejected with the auto-trading switch off holds back the same
+    one only while the switch is still off - turned on mid-candle, the
+    candle's signal still goes through."""
+    return [] if switched_off else [TradingDecision.risk_reason.is_distinct_from(AUTO_TRADING_OFF)]
+
+
+async def _already_queued(paper: Paper, signal: Signal, switched_off: bool) -> bool:
     """The same signal was already queued since the latest reading (closed
     candle) - e.g. an entry the risk engine rejected. Each signal is queued
     at most once per candle; an exit and the reversed entry are different
@@ -238,6 +247,7 @@ async def _already_queued(paper: Paper, signal: Signal) -> bool:
                 TradingDecision.direction == signal.direction,
                 TradingDecision.reason == signal.reason,
                 TradingDecision.decided_at >= reading_at,
+                *_holding_back(switched_off),
             )
             .limit(1)
         )
@@ -356,7 +366,9 @@ def add_window(
     return max((t for t in (last_buy_at, reading_at) if t is not None), default=None)
 
 
-async def _add_queued(paper: Paper, signal: Signal, last_buy_at: datetime | None) -> bool:
+async def _add_queued(
+    paper: Paper, signal: Signal, last_buy_at: datetime | None, switched_off: bool
+) -> bool:
     """An add of the same kind was already queued in its add_window. A signal
     add counts the position's entry too: no add on the candle it opened on."""
     async with async_session() as session:
@@ -376,6 +388,7 @@ async def _add_queued(paper: Paper, signal: Signal, last_buy_at: datetime | None
                 TradingDecision.mode == paper.mode,
                 same_kind,
                 *([TradingDecision.decided_at >= since] if since is not None else []),
+                *_holding_back(switched_off),
             )
             .limit(1)
         )
@@ -465,9 +478,9 @@ async def run_once(strategy: Strategy) -> None:
 
     for paper in papers:
         try:
-            # Switch off: no entries and no exits for live papers.
-            if paper.mode == "live" and not live_auto:
-                continue
+            # Switch off: a live paper's entries and exits are logged as
+            # rejected, never placed.
+            switched_off = paper.mode == "live" and not live_auto
             if await _has_in_flight(paper.id):
                 continue
             price = await latest_price(paper.asset, paper.timeframe)
@@ -492,13 +505,16 @@ async def run_once(strategy: Strategy) -> None:
             if signal is None:
                 continue
             if signal.signal == "add":
-                if await _add_queued(paper, signal, last_buy_at):
+                if await _add_queued(paper, signal, last_buy_at, switched_off):
                     continue
-            elif await _already_queued(paper, signal):
+            elif await _already_queued(paper, signal, switched_off):
                 continue
             if signal.signal != "exit" and not await _entry_allowed(
                 strategy.name, paper, signal.direction
             ):
+                continue
+            if switched_off:
+                await reject_decision(paper, signal, tick.price, AUTO_TRADING_OFF)
                 continue
             await queue_decision(paper, signal, tick.price)
         except Exception:
