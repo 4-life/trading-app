@@ -6,7 +6,7 @@ import { FIELD_CLASS } from "@/lib/styles";
 import { ASSET_KINDS, AVERAGING_KINDS } from "@/constants/papers";
 import type { ActionResult } from "@/types/action";
 
-import { AVERAGING_DIRECTIONS, EXECUTORS, SCANNER_EXECUTORS, TIMEFRAMES } from "../constants";
+import { averagingDirections, EXECUTORS, SCANNER_EXECUTORS, TIMEFRAMES } from "../constants";
 import { PaperExitsFields } from "../paper-exits-fields";
 import { PositionManagementFields } from "../position-management-fields";
 import { Select } from "../select";
@@ -55,7 +55,7 @@ export function CreatePaperForm({
         key={`${kind}-${executor}`}
         name="direction"
         options={
-          AVERAGING_KINDS.includes(kind) ? (AVERAGING_DIRECTIONS[kind] ?? []) : (EXECUTORS[executor] ?? [])
+          AVERAGING_KINDS.includes(kind) ? averagingDirections(kind, executor) : (EXECUTORS[executor] ?? [])
         }
       />
       <input

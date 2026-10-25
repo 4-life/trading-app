@@ -10,6 +10,14 @@ import { DateField } from "./date-field";
 
 const asPercent = (share: number) => `${(share * 100).toFixed(1)}%`;
 
+// A new paper's starting values, as typed (take profit in %).
+const NEW_PAPER_DEFAULTS: Partial<Record<(typeof MANAGEMENT_FIELDS)[number][0], string>> = {
+  initial_size_usd: "10",
+  add_leverage: "5",
+  max_margin_usd: "1000",
+  take_profit_pct: "1",
+};
+
 // Where the automatic give-up lands with these settings, and the optional max
 // drawdown's place - a short's above the first entry (+).
 function describe(result: GiveUp | null, maxDrawdown: number, short: boolean): string {
@@ -45,17 +53,23 @@ export function PositionManagementFields({ paper }: { paper?: Paper }) {
       const value = (name: string) => Number(data.get(name) ?? 0) || 0;
       const initial = value("initial_size_usd");
       // The create form's direction select, else the paper's.
-      const short = (data.get("direction") ?? paper?.direction) === "short";
-      const result = giveUp(
-        value("leverage"),
-        initial,
-        value("add_size_usd") || initial,
-        value("add_leverage"),
-        value("max_margin_usd"),
-        paper?.maintenance_margin ? Number(paper.maintenance_margin) : null,
-        short,
-      );
-      setFloor(describe(result, value("max_drawdown_pct") / 100, short));
+      const direction = data.get("direction") ?? paper?.direction;
+      const line = (short: boolean) =>
+        describe(
+          giveUp(
+            value("leverage"),
+            initial,
+            value("add_size_usd") || initial,
+            value("add_leverage"),
+            value("max_margin_usd"),
+            paper?.maintenance_margin ? Number(paper.maintenance_margin) : null,
+            short,
+          ),
+          value("max_drawdown_pct") / 100,
+          short,
+        );
+      // Both: a long's and a short's.
+      setFloor(direction === "both" ? `Long: ${line(false)} Short: ${line(true)}` : line(direction === "short"));
     };
     update();
     form.addEventListener("input", update);
@@ -68,7 +82,12 @@ export function PositionManagementFields({ paper }: { paper?: Paper }) {
     <div ref={box} className="flex flex-wrap items-end gap-2">
       {MANAGEMENT_FIELDS.map(([name, label, percent, required]) => {
         const value = paper?.[name];
-        const shown = value === null || value === undefined ? "" : String(Number(value) * (percent ? 100 : 1));
+        const shown =
+          paper === undefined
+            ? (NEW_PAPER_DEFAULTS[name] ?? "")
+            : value === null || value === undefined
+              ? ""
+              : String(Number(value) * (percent ? 100 : 1));
         return (
           <label key={name} className="flex flex-col gap-0.5 text-xs text-muted-foreground">
             {label}

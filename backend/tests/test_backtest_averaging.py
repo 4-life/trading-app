@@ -60,7 +60,7 @@ def test_a_short_is_the_long_mirrored() -> None:
     # $100 short at 100 ($10 margin): half of it is lost at 105; the strategy
     # buys back at 70.
     bars = _bars((100, 100, 100, 100), (100, 105.5, 100, 104), (104, 104, 69, 70))
-    short = replace(PLAN_F, short=True)
+    short = replace(PLAN_F, direction="short")
     [t] = simulate(bars, [_entry(0, direction="short", sell_at=(2, 70))], short)
     assert t.adds == 1
     assert t.margin == 20
@@ -83,12 +83,28 @@ def test_a_short_gives_up_above_the_first_sell() -> None:
     # No budget for an add: the automatic give-up once 70% of the $10 margin
     # is lost - at 107, on the way up (before the 40% drawdown's 140).
     bars = _bars((100, 100, 100, 100), (100, 150, 100, 145))
-    rules = replace(PLAN_F, short=True, max_margin=10)
+    rules = replace(PLAN_F, direction="short", max_margin=10)
     [t] = simulate(bars, [_entry(0, direction="short")], rules)
     assert t.exit_reason == OUT_OF_MARGIN_EXIT
     assert t.close_price == pytest.approx(107)
     assert t.give_up_price == pytest.approx(140)
     assert t.pnl_usd == pytest.approx(-7)
+
+
+def test_both_takes_each_positions_direction_from_its_entry() -> None:
+    # A long opens at 100; the short signal while it's open adds nothing; the
+    # strategy sells it at 130 (take-profit) and a short opens there.
+    bars = _bars((100, 100, 100, 100), (100, 101, 99, 100), (100, 131, 100, 130))
+    both = replace(PLAN_F, direction="both")
+    entries = [_entry(0, sell_at=(2, 130)), _entry(1, direction="short"), _entry(2, 130, "short")]
+    long, short = simulate(bars, entries, both)
+    assert (long.direction, long.adds, long.exit_reason) == (
+        "long",
+        0,
+        f"{TAKE_PROFIT_EXIT}:hh_rejection",
+    )
+    assert (short.direction, short.opened_at, short.entry_price) == ("short", bars[2].time, 130)
+    assert short.exit_reason == "open_at_end"
 
 
 def test_a_sell_below_the_take_profit_is_ignored_the_position_holds() -> None:

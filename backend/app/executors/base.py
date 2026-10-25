@@ -52,9 +52,9 @@ logger = logging.getLogger(__name__)
 # A trade older than this isn't the current price - fall back to the candle close.
 LIVE_PRICE_MAX_AGE = timedelta(seconds=60)
 
-# A reopening paper's trend, checked once per closed candle: paper id ->
+# A reopening paper's trend, checked once per closed candle: (paper id, direction) ->
 # (that candle's open time, the strategy's own trade still open at its close).
-_trend_checked: dict[int, tuple[datetime, bool]] = {}
+_trend_checked: dict[tuple[int, str], tuple[datetime, bool]] = {}
 
 
 @dataclass(frozen=True)
@@ -400,12 +400,12 @@ def reopens(paper: Paper) -> bool:
     return paper.kind == "averaging" and paper.intraday and paper.reopen_in_trend
 
 
-async def _in_trend(paper: Paper, candle: datetime) -> bool:
-    """The strategy's own trade (the paper's direction) still open at the close of `candle` (the
+async def _in_trend(paper: Paper, candle: datetime, direction: Direction) -> bool:
+    """The strategy's own trade in `direction` still open at the close of `candle` (the
     latest closed one) - the paper's backtest replayed over its stored
     candles, as the averaging backtest decides it (app/backtest/averaging.py
     in_trend). Once per candle: the replay is heavy."""
-    checked = _trend_checked.get(paper.id)
+    checked = _trend_checked.get((paper.id, direction))
     if checked is not None and checked[0] == candle:
         return checked[1]
     # Lazy: the backtests import this module.
@@ -418,9 +418,9 @@ async def _in_trend(paper: Paper, candle: datetime) -> bool:
         trades_of is not None
         and bool(bars)
         and bars[-1].time == candle
-        and candle in in_trend(bars, trades_of(paper, bars, None), paper.direction)
+        and candle in in_trend(bars, trades_of(paper, bars, None), direction)
     )
-    _trend_checked[paper.id] = (candle, held)
+    _trend_checked[(paper.id, direction)] = (candle, held)
     return held
 
 
@@ -451,11 +451,12 @@ async def _reopen_in_trend(paper: Paper) -> Signal | None:
     if len(opens) < 2 or last is None or last.closed_at is None:
         return None
     forming, candle = opens
-    if last.direction != paper.direction or last.exit_reason != TAKE_PROFIT_EXIT:
+    # Its last position's direction (both: either).
+    direction: Direction = "short" if last.direction == "short" else "long"
+    if not direction_allowed(paper.direction, direction) or last.exit_reason != TAKE_PROFIT_EXIT:
         return None
-    if not candle <= last.closed_at < forming or not await _in_trend(paper, candle):
+    if not candle <= last.closed_at < forming or not await _in_trend(paper, candle, direction):
         return None
-    direction: Direction = "short" if paper.direction == "short" else "long"
     return Signal("enter", direction, REOPEN_IN_TREND)
 
 

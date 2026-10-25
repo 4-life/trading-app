@@ -186,20 +186,21 @@ def simulate_paper(paper: Paper, bars: list[Bar], start: datetime | None = None)
 
 
 def entry_signals(paper: Paper, bars: list[Bar]) -> list[SimTrade]:
-    """Every candle the trend signals a long on (a short paper: a short) -
-    held or not (an averaging paper's entries and signal adds; its other
-    entries come from its trades)."""
-    direction: Direction = "short" if paper.direction == "short" else "long"
-    v = view(
-        direction,
+    """Every candle the trend signals a long on (a short paper: a short;
+    both: either) - held or not (an averaging paper's entries and signal
+    adds; its other entries come from its trades)."""
+    series = (
         [b.high for b in bars],
         [b.low for b in bars],
         [b.close for b in bars],
         [b.volume for b in bars],
     )
+    both: tuple[Direction, ...] = ("long", "short")
+    views = [view(d, *series) for d in both if direction_allowed(paper.direction, d)]
     return [
-        SimTrade(direction, bar.time, bar.close, None, entry_reason=REGIME_ENTRY)
+        SimTrade(v.direction, bar.time, bar.close, None, entry_reason=REGIME_ENTRY)
         for i, bar in enumerate(bars)
+        for v in views
         if trend_signal(v, i)
     ]
 

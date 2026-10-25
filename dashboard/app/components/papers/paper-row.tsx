@@ -52,18 +52,22 @@ function ManagementSummary({ paper }: { paper: Paper }) {
   }
   if (AVERAGING_KINDS.includes(paper.kind)) {
     const initial = Number(paper.initial_size_usd ?? 0);
-    const auto = giveUp(
-      Number(paper.leverage),
-      initial,
-      Number(paper.add_size_usd ?? initial),
-      Number(paper.add_leverage ?? 0),
-      Number(paper.max_margin_usd ?? 0),
-      paper.maintenance_margin === null ? null : Number(paper.maintenance_margin),
-      paper.direction === "short",
-    );
-    if (auto !== null) {
-      const against = paper.direction === "short" ? "+" : "−";
-      parts.push(`gives up at ${against}${(auto.drop * 100).toFixed(1)}%`);
+    // Both: a long's and a short's.
+    const sides = paper.direction === "both" ? [false, true] : [paper.direction === "short"];
+    const levels = sides.flatMap((short) => {
+      const auto = giveUp(
+        Number(paper.leverage),
+        initial,
+        Number(paper.add_size_usd ?? initial),
+        Number(paper.add_leverage ?? 0),
+        Number(paper.max_margin_usd ?? 0),
+        paper.maintenance_margin === null ? null : Number(paper.maintenance_margin),
+        short,
+      );
+      return auto === null ? [] : [`${short ? "+" : "−"}${(auto.drop * 100).toFixed(1)}%`];
+    });
+    if (levels.length > 0) {
+      parts.push(`gives up at ${levels.join(" / ")}`);
     }
   }
   if (parts.length === 0) {

@@ -55,7 +55,9 @@ entries open it and its short exits are the sell signals, each candle takes
 the price up to its high first (the adds, the give-up and the liquidation
 above the entry), then down (the unwinds and the take-profit); its "buys"
 are the sells that open or add to it - the fills' sides stay "buy" (adds)
-and "sell" (reductions)."""
+and "sell" (reductions). With `direction` both, each position takes the
+direction of the entry that opens it - a long or a short, one at a time;
+the other direction's signals are ignored while it's open."""
 
 import logging
 import sys
@@ -135,11 +137,16 @@ class Rules:
     # The exchange's maintenance margin, a share of the notional
     # (app/market_data/limits.py): liquidated under it instead of `maintenance`.
     maintenance_notional: float | None = None
-    short: bool = False  # a short paper: everything mirrored (the module's doc)
+    # long / short / both: the positions it opens - a short's mirrored (the module's doc).
+    direction: str = "long"
 
     @property
-    def sign(self) -> int:
-        return -1 if self.short else 1
+    def directions(self) -> tuple[str, ...]:
+        return ("long", "short") if self.direction == "both" else (self.direction,)
+
+
+def _sign(direction: str) -> int:
+    return -1 if direction == "short" else 1
 
 
 def _worse(sign: int, a: float, b: float) -> float:
@@ -157,7 +164,7 @@ class Position:
     opened_at: datetime
     entry_reason: str
     first_buy: float
-    sign: int = 1  # 1 a long, -1 a short (Rules.sign)
+    sign: int = 1  # 1 a long, -1 a short (_sign)
     # The most it may lock at once: Rules.max_margin, less past losses - never
     # more (profits are banked, not put back in) unless the rules compound.
     budget: float | None = None
@@ -349,6 +356,7 @@ class AveragingTrade:
     exit_reason: str
     pnl_usd: float  # net of every fee
     hedge_pnl_usd: float = 0.0  # its hedge's shorts (app/backtest/hedge.py), net of fees
+    direction: str = "long"
 
     @property
     def adds(self) -> int:
@@ -383,6 +391,7 @@ def _close(
         price,
         reason,
         pnl,
+        direction="short" if pos.sign == -1 else "long",
     )
 
 
@@ -496,20 +505,20 @@ def simulate(
     no short open and its total (the long's + its shorts' PnL) in profit, it
     closes at that close (SEASON_END_EXIT) and a new one opens there
     (SEASON_REOPEN) - the budget allowing."""
-    direction = "short" if rules.short else "long"
-    sign = rules.sign
-    signals: dict[datetime, SimTrade] = {}
-    sells: dict[datetime, SimTrade] = {}
+    directions = rules.directions
+    signals: dict[str, dict[datetime, SimTrade]] = {d: {} for d in directions}
+    sells: dict[str, dict[datetime, SimTrade]] = {d: {} for d in directions}
     for t in signals_held:
-        if t.direction == direction:
-            signals.setdefault(t.opened_at, t)
+        if t.direction in signals:
+            signals[t.direction].setdefault(t.opened_at, t)
     for t in entries:
-        if t.direction == direction:
-            signals.setdefault(t.opened_at, t)
+        if t.direction in signals:
+            signals[t.direction].setdefault(t.opened_at, t)
             if t.closed_at is not None and t.exit_reason != OPEN_AT_END:
-                sells.setdefault(t.closed_at, t)
+                sells[t.direction].setdefault(t.closed_at, t)
     # Reopening after an intraday take-profit: where the strategy's trend lasts.
-    trend = in_trend(bars, entries, direction) if rules.intraday and rules.reopen else set()
+    reopening = rules.intraday and rules.reopen
+    trend = {d: in_trend(bars, entries, d) if reopening else set() for d in directions}
     trades: list[AveragingTrade] = []
     pos: Position | None = None
     budget = rules.max_margin  # the cash: grows with every win, shrinks with every loss
@@ -521,7 +530,7 @@ def simulate(
             return None
         return cash if rules.compound else min(cash, rules.max_margin)
 
-    def open_at(time: datetime, reason: str, price: float) -> Position:
+    def open_at(time: datetime, reason: str, price: float, sign: int) -> Position:
         """A new position on the cash; compounding, its hedge's thresholds
         (the share of the max margin) are on its budget instead."""
         opened = Position(time, reason, price, sign, cap(budget))
@@ -531,9 +540,11 @@ def simulate(
 
     bearish_before = False  # the trend bands closed bearish on the previous candle (a hedge's)
     for bar in bars:
-        signal = signals.get(bar.time)
-        favourable = bar.high if sign == 1 else bar.low  # a short's way down
         if pos is not None:
+            sign = pos.sign
+            direction = "short" if sign == -1 else "long"
+            signal = signals[direction].get(bar.time)  # its own direction's only
+            favourable = bar.high if sign == 1 else bar.low  # a short's way down
             buys = len(pos.fills)
             closed = _down_to_low(pos, bar, rules, fee_rate)
             # On the way up, each unit but the lowest is sold once it's in profit
@@ -552,7 +563,7 @@ def simulate(
                     break
                 pos.sell_signal_unit(bar.time, price, fee_rate)
                 sale = pos.next_signal_sale(buffer)
-            sell = sells.get(bar.time)
+            sell = sells[direction].get(bar.time)
             # A hedged position's take-profit counts its shorts too: their PnL
             # and margin (the short closes with the long).
             shorts_pnl, shorts_margin = _shorts(hedge, pos, bar.time)
@@ -586,9 +597,10 @@ def simulate(
                 if budget is not None:
                     budget += closed.pnl_usd
                 funded = budget is None or budget >= rules.initial_size
-                if closed.exit_reason == TAKE_PROFIT_EXIT and bar.time in trend and funded:
-                    # The trend still up: a fresh position at the candle's close.
-                    pos = open_at(bar.time, REOPEN_IN_TREND, bar.close)
+                reopen = closed.exit_reason == TAKE_PROFIT_EXIT and bar.time in trend[direction]
+                if reopen and funded:
+                    # The trend still on: a fresh position at the candle's close.
+                    pos = open_at(bar.time, REOPEN_IN_TREND, bar.close, sign)
                     pos.buy(bar.time, bar.close, rules.initial_size, rules.leverage, fee_rate)
             else:
                 if signal is not None and _can_add(pos, rules.initial_size):
@@ -621,15 +633,17 @@ def simulate(
                             budget += closed.pnl_usd
                         pos = None
                         if budget is None or budget >= rules.initial_size:
-                            pos = open_at(bar.time, SEASON_REOPEN, bar.close)
+                            pos = open_at(bar.time, SEASON_REOPEN, bar.close, sign)
                             pos.buy(
                                 bar.time, bar.close, rules.initial_size, rules.leverage, fee_rate
                             )
         bearish_before = hedge is not None and bar.time in hedge.bearish
         funded = budget is None or budget >= rules.initial_size
+        # Flat: the first direction signalling here opens one (both: a long first).
+        signal = next((signals[d][bar.time] for d in directions if bar.time in signals[d]), None)
         if pos is None and signal is not None and funded and (start is None or bar.time >= start):
             price = signal.entry_price
-            pos = open_at(bar.time, signal.entry_reason, price)
+            pos = open_at(bar.time, signal.entry_reason, price, _sign(signal.direction))
             pos.buy(bar.time, price, rules.initial_size, rules.leverage, fee_rate)
     if pos is not None and bars:
         last = _close(pos, bars[-1], bars[-1].close, OPEN_AT_END, rules, fee_rate)
@@ -670,7 +684,7 @@ def rules_of(paper: Paper, limits: Limits | None = None) -> Rules:
         reopen=bool(paper.reopen_in_trend),
         compound=bool(paper.compound_margin),
         maintenance_notional=None if limits is None else limits.maintenance_margin,
-        short=paper.direction == "short",
+        direction=paper.direction,
     )
 
 
@@ -709,7 +723,7 @@ async def backtest_paper(paper: Paper, start: datetime | None) -> list[Averaging
         for t in trades:
             row = BacktestTrade(
                 paper_id=paper.id,
-                direction=paper.direction,
+                direction=t.direction,
                 opened_at=t.opened_at,
                 entry_price=Decimal(str(t.entry_price)),
                 stop_loss_price=None if t.give_up_price is None else Decimal(str(t.give_up_price)),
