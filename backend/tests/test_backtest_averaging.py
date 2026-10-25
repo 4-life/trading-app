@@ -7,6 +7,7 @@ import pytest
 
 from app.backtest.averaging import Rules, in_trend, simulate, states_after
 from app.backtest.bars import Bar, Fill, SimTrade
+from app.backtest.sweep import drained_at
 from app.executors.position_management import (
     MAX_DRAWDOWN_EXIT,
     OUT_OF_MARGIN_EXIT,
@@ -397,3 +398,20 @@ def test_the_trend_lasts_from_the_entry_to_before_the_sell() -> None:
     bars = _bars(*(_REOPEN_BARS * 2))
     held = in_trend(bars, [_entry(1, sell_at=(4, 100)), _entry(5)])
     assert held == {T0 + timedelta(hours=k) for k in (1, 2, 3, 5)}
+
+
+def test_drained_at_the_close_that_takes_the_cash_under_the_initial_size() -> None:
+    # $30 of cash, $10 positions: three give-ups of ~$7 leave it under $10 at the second.
+    bars = _bars(
+        (100, 100, 100, 100),
+        (100, 100, 50, 50),
+        (50, 50, 50, 50),
+        (50, 50, 25, 25),
+        (25, 25, 25, 25),
+    )
+    rules = replace(PLAN_F, max_margin=30)
+    trades = simulate(bars, [_entry(0), _entry(2, 50), _entry(4, 25)], rules)
+    drained = drained_at(trades, rules)
+    cash = 30 + sum(t.pnl_usd for t in trades if t.closed_at <= (drained or T0))
+    assert drained is not None and cash < 10
+    assert drained_at(trades, replace(rules, max_margin=None)) is None

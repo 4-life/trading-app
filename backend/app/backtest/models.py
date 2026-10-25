@@ -132,6 +132,9 @@ class SweepRun(Base):
     liquidations: Mapped[int] = mapped_column(Integer)
     most_margin_usd: Mapped[Decimal] = mapped_column(Numeric)
     cash_drawdown_usd: Mapped[Decimal] = mapped_column(Numeric)
+    # The cash fell under the initial size there - it stopped trading
+    # (app/backtest/sweep.py drained_at); NULL: never.
+    drained_at: Mapped[date | None] = mapped_column(Date, nullable=True)
 
 
 class ExitSweepRun(Base):

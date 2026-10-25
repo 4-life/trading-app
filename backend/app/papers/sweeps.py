@@ -8,7 +8,7 @@ only) - no other sweep starts meanwhile."""
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -103,6 +103,10 @@ async def _close_interrupted() -> PaperSweep | None:
     return running
 
 
+def _date(value: object) -> date | None:
+    return None if value is None else date.fromisoformat(str(value))
+
+
 def _run_row(sweep_id: int, r: dict[str, object]) -> SweepRun:
     def num(key: str) -> Decimal:
         return Decimal(str(r[key]))
@@ -128,6 +132,7 @@ def _run_row(sweep_id: int, r: dict[str, object]) -> SweepRun:
         liquidations=int(num("all_liquidations")),
         most_margin_usd=num("all_most_cash_usd"),
         cash_drawdown_usd=num("all_cash_drawdown_usd"),
+        drained_at=_date(r.get("drained_at")),
     )
 
 
@@ -431,7 +436,8 @@ async def sweep_runs(
     compound: bool = False,
 ) -> list[SweepRun]:
     """The sweep's runs so far with compounding on / off, sorted by `sort`
-    (SAFEST_TOTAL, MOST_WON_TOTAL: their own order, `order` aside)."""
+    (SAFEST_TOTAL, MOST_WON_TOTAL: their own order, `order` aside) - the
+    drained ones (stopped trading, out of cash) after the others."""
     rankings: dict[str, list[ColumnElement[Any]]] = {
         SAFEST_TOTAL: [
             (SweepRun.give_ups + SweepRun.liquidations).asc(),
@@ -444,7 +450,7 @@ async def sweep_runs(
         rows = await session.scalars(
             select(SweepRun)
             .where(SweepRun.sweep_id == sweep_id, SweepRun.compound == compound)
-            .order_by(*ordering, SweepRun.id)
+            .order_by(SweepRun.drained_at.is_(None).desc(), *ordering, SweepRun.id)
             .limit(limit)
         )
         return list(rows.all())

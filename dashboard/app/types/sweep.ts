@@ -39,6 +39,8 @@ export interface SweepRun {
   liquidations: number;
   most_margin_usd: number;
   cash_drawdown_usd: number;
+  // The cash fell under the initial size (YYYY-MM-DD): it stopped trading; null: never.
+  drained_at: string | null;
 }
 
 // One run of a single paper's sweep (GET /papers/{id}/sweep/exit-runs): its

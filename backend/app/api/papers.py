@@ -408,6 +408,7 @@ class SweepRunOut(BaseModel):
     liquidations: int
     most_margin_usd: float  # the most locked at once
     cash_drawdown_usd: float
+    drained_at: date | None  # the cash fell under the initial size: it stopped trading
 
     model_config = {"from_attributes": True}
 

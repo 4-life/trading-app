@@ -31,8 +31,10 @@ drawdown and max margin fixed, every PAPER_LEVERAGES (up to the asset's max
 leverage) x PAPER_INITIAL_SIZES x PAPER_TAKE_PROFITS x PAPER_MODES (hold,
 intraday, intraday reopening in the trend) x compounding on / off (the
 budget growing with the realized PnL - Rules.compound),
-trading over the last PAPER_DAYS of its stored candles (split at SPLIT, as
-above) - a chunk per leverage x initial size, spread over the worker
+trading over the same period as the paper's backtest - from its
+`backtest_start`, else its whole stored history (split at SPLIT, as
+above); each run records when its cash fell under the initial size and it
+stopped trading (drained_at) - a chunk per leverage x initial size, spread over the worker
 processes - run at a low priority (WORKER_NICE): the API and the executors
 come first.
 
@@ -100,7 +102,7 @@ PAPER_TAKE_PROFITS = (
     0.01, 0.02, 0.03, 0.05, 0.075, 0.10, 0.15, 0.20,
     0.25, 0.30, 0.40, 0.50, 0.75, 1.00, 1.50, 2.00,
 )  # of the margin  # fmt: skip
-PAPER_DAYS = 365
+PAPER_DAYS = 365  # a single paper's sweep (app/backtest/exit_sweep.py)
 # (intraday, reopen): hold for the strategy's sell, intraday, intraday reopening
 # after a take-profit while the trend lasts (Rules.reopen).
 PAPER_MODES = ((False, False), (True, False), (True, True))
@@ -347,6 +349,7 @@ def run_paper(job: PaperJob) -> list[dict[str, object]]:
         )
         result = simulate(job.bars, job.trades, rules, job.fee_rate, job.start, job.signals)
         whole = _part(result, "all")
+        drained = drained_at(result, rules)
         rows.append(
             {
                 "paper": job.paper,
@@ -366,6 +369,7 @@ def run_paper(job: PaperJob) -> list[dict[str, object]]:
                 "split": job.split.date().isoformat(),
                 "to": end.date().isoformat(),
                 "total_usd": round(whole["all_pnl_usd"] + whole["all_open_unrealized_usd"], 2),
+                "drained_at": None if drained is None else drained.date().isoformat(),
                 **whole,
                 **_part([t for t in result if t.opened_at < job.split], "train"),
                 **_part([t for t in result if t.opened_at >= job.split], "test"),
@@ -374,17 +378,38 @@ def run_paper(job: PaperJob) -> list[dict[str, object]]:
     return rows
 
 
+def drained_at(trades: list[AveragingTrade], rules: Rules) -> datetime | None:
+    """When the cash (simulate's budget: the max margin plus every closed
+    position's PnL) fell under the initial size - no position opens after
+    it; None if it never did (or without a max margin)."""
+    if rules.max_margin is None:
+        return None
+    cash = rules.max_margin
+    for t in trades:
+        if t.exit_reason == OPEN_AT_END:
+            continue
+        cash += t.pnl_usd
+        if cash < rules.initial_size:
+            return t.closed_at
+    return None
+
+
 class SweepError(Exception):
     """A paper the sweep can't run on - the reason."""
 
 
 def strategy_inputs(
-    executor: str, asset: str, direction: str, timeframe: str, bars: list[Bar]
+    executor: str,
+    asset: str,
+    direction: str,
+    timeframe: str,
+    bars: list[Bar],
+    start: datetime | None = None,
 ) -> tuple[list[SimTrade], list[SimTrade]]:
-    """The strategy's trades and its long signals over `bars` - in a worker
-    process (sweep_paper)."""
+    """The strategy's trades from `start` and its long signals over `bars` -
+    in a worker process (sweep_paper)."""
     paper = Paper(executor=executor, asset=asset, direction=direction, timeframe=timeframe)
-    return STRATEGY_TRADES[executor](paper, bars, None), ENTRY_SIGNALS[executor](paper, bars)
+    return STRATEGY_TRADES[executor](paper, bars, start), ENTRY_SIGNALS[executor](paper, bars)
 
 
 def check_sweepable(paper: Paper) -> None:
@@ -424,7 +449,11 @@ async def plan_sweep(
     if len(bars) < 2:
         raise SweepError("no candles")
     end = bars[-1].time
-    start = max(bars[0].time, end - timedelta(days=PAPER_DAYS))
+    # The paper's backtest period (app/backtest/averaging.py backtest_paper):
+    # its results compare with the sweep's.
+    start = max(bars[0].time, paper.backtest_start or bars[0].time)
+    if start >= end:
+        raise SweepError("the backtest start is after the last candle")
     split = start + (end - start) * SPLIT
     # The strategy's trades in a worker process too - CPU-heavy, and the API
     # runs this: its other requests mustn't wait.
@@ -438,6 +467,7 @@ async def plan_sweep(
             paper.direction,
             paper.timeframe,
             bars,
+            paper.backtest_start,
         )
     fee_rate = float(await maker_fee_rate())
     limits = await market_limits(paper.asset)

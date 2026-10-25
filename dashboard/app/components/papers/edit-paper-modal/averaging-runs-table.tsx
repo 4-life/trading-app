@@ -21,6 +21,7 @@ export function AveragingRunsTable({ runs }: { runs: SweepRun[] }) {
             <th>Won</th>
             <th>Give-ups</th>
             <th>Most margin</th>
+            <th>Drained</th>
           </tr>
         </thead>
         <tbody>
@@ -60,6 +61,9 @@ export function AveragingRunsTable({ runs }: { runs: SweepRun[] }) {
                 {`${String(r.give_ups)}${r.liquidations ? ` + ${String(r.liquidations)} liq.` : ""}`}
               </td>
               <td>{formatUsd(String(r.most_margin_usd))}</td>
+              <td className={r.drained_at ? "text-red-500" : "text-muted-foreground"}>
+                {r.drained_at ?? "—"}
+              </td>
             </tr>
           ))}
         </tbody>
