@@ -127,7 +127,6 @@ jobs:
           POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
           APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
           SETTINGS_ENCRYPTION_KEY: ${{ secrets.SETTINGS_ENCRYPTION_KEY }}
-          ASSETS: ${{ vars.ASSETS || '["BTC","ETH","SOL"]' }}
           BACKFILL_DAYS: ${{ vars.BACKFILL_DAYS || '220' }}
           RAW_DATA_RETENTION_HOURS: ${{ vars.RAW_DATA_RETENTION_HOURS || '24' }}
           BACKEND_IMAGE: ${{ needs.build.outputs.backend_image }}
@@ -140,7 +139,6 @@ jobs:
             printf 'POSTGRES_DB=%s\n' "$POSTGRES_DB"
             printf 'APP_PASSWORD=%s\n' "$APP_PASSWORD"
             printf 'SETTINGS_ENCRYPTION_KEY=%s\n' "$SETTINGS_ENCRYPTION_KEY"
-            printf 'ASSETS=%s\n' "$ASSETS"
             printf 'BACKFILL_DAYS=%s\n' "$BACKFILL_DAYS"
             printf 'RAW_DATA_RETENTION_HOURS=%s\n' "$RAW_DATA_RETENTION_HOURS"
             printf 'BACKEND_IMAGE=%s\n' "$BACKEND_IMAGE"

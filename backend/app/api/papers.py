@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.backtest.averaging import backtest_paper as backtest_averaging
 from app.backtest.models import OPEN_AT_END, BacktestTrade, SweepBatch
 from app.backtest.sweep import SweepError
-from app.config import settings
 from app.db import async_session
 from app.execution_engine.live import live_client
 from app.execution_engine.models import (
@@ -25,6 +24,7 @@ from app.execution_engine.models import (
     Position,
     TradingDecision,
 )
+from app.market_data.assets import configured_assets
 from app.market_data.limits import all_market_limits, market_limits
 from app.papers.models import (
     ASSET_KINDS,
@@ -280,8 +280,8 @@ async def create_paper(payload: PaperCreate) -> PaperOut:
             allowed = ", ".join(_SCANNER_EXECUTORS)
             raise HTTPException(status_code=422, detail=f"a scanner paper runs: {allowed}")
         payload.asset = MARKET
-    elif payload.asset not in settings.assets:
-        raise HTTPException(status_code=422, detail=f"{payload.asset!r} is not in ASSETS")
+    elif payload.asset not in await configured_assets():
+        raise HTTPException(status_code=422, detail=f"{payload.asset!r} isn't an added asset")
     _check_management(payload.kind, payload)
     _check_exits(payload.kind, payload)
     if payload.kind != "scanner":

@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.config import settings
 from app.db import async_session
 from app.exchange.base import MarketAdapter
+from app.market_data.assets import configured_assets, delete_asset_data
 from app.market_data.models import (
     Candle,
     FundingRate,
@@ -421,15 +422,17 @@ async def backfill_funding(
     return len(history)
 
 
+# How often the collector re-reads the asset list (the dashboard's editor).
+_ASSETS_REFRESH_SECONDS = 10
+
+
 class MarketDataCollector:
-    def __init__(self, adapter: MarketAdapter, assets: list[str]) -> None:
+    def __init__(self, adapter: MarketAdapter) -> None:
         self._adapter = adapter
-        # Coins the provider doesn't list (e.g. Lighter's XAU on Hyperliquid)
-        # are skipped once, with a warning - not an error on every poll.
-        self._assets = [a for a in assets if adapter.is_listed(a)]
-        unlisted = [a for a in assets if not adapter.is_listed(a)]
-        if unlisted:
-            logger.warning("not listed by the provider - not collected: %s", ", ".join(unlisted))
+        # The asset list as added (docs/market-data.md#asset-universe), and
+        # the ones of it the provider lists - collected.
+        self._configured: list[str] = []
+        self._assets: list[str] = []
         # One cursor per standard scale, not just two - each interval polls
         # forward from wherever it last left off independently, same reason
         # candle/scalp-candle needed separate cursors before.
@@ -443,8 +446,10 @@ class MarketDataCollector:
         self._last_ws_message_at: datetime = datetime.now(UTC)
 
     async def start(self) -> None:
+        await self._load_assets()
         await self._subscribe_all()
         await asyncio.gather(
+            self._poll_loop(self._refresh_assets, _ASSETS_REFRESH_SECONDS),
             # Aligned to the clock: candles close on minute boundaries, so a
             # closed candle is stored ~2 s after its close (app/scheduling.py).
             self._poll_loop(self._poll_candles, settings.candle_poll_seconds, offset_seconds=2),
@@ -453,6 +458,36 @@ class MarketDataCollector:
             self._poll_loop(self._check_ws_health, settings.ws_health_check_seconds),
             self._poll_loop(self._prune_raw_data, _PRUNE_SECONDS),
         )
+
+    async def _load_assets(self) -> list[str]:
+        """Reads the asset list; returns the assets deleted since the last read."""
+        configured = await configured_assets()
+        if configured == self._configured:
+            return []
+        # Coins the provider doesn't list (e.g. Lighter's XAU on Hyperliquid)
+        # are skipped, with a warning once per change - not an error on every poll.
+        unlisted = [a for a in configured if not self._adapter.is_listed(a)]
+        if unlisted:
+            logger.warning("not listed by the provider - not collected: %s", ", ".join(unlisted))
+        deleted = [a for a in self._configured if a not in configured]
+        self._configured = configured
+        self._assets = [a for a in configured if self._adapter.is_listed(a)]
+        return deleted
+
+    async def _refresh_assets(self) -> None:
+        """An asset added or deleted in the dashboard: the WebSocket
+        re-subscribed to the new list. A deleted one's data is deleted once
+        more - rows stored between the API's delete and this refresh."""
+        previous = self._configured
+        deleted = await self._load_assets()
+        if self._configured == previous:
+            return
+        await self._adapter.reconnect_ws()
+        await self._subscribe_all()
+        logger.info("assets changed - re-subscribed to %d asset(s)", len(self._assets))
+        async with async_session() as session, session.begin():
+            for asset in deleted:
+                await delete_asset_data(session, asset)
 
     async def _subscribe_all(self) -> None:
         for asset in self._assets:
@@ -546,7 +581,7 @@ class MarketDataCollector:
             await session.commit()
 
     async def _paper_pairs(self) -> list[tuple[str, str]]:
-        """Enabled papers' (asset, timeframe) outside ASSETS - coins a scanner
+        """Enabled papers' (asset, timeframe) outside the asset list - coins a scanner
         picked (docs/market-data.md#collected-data). Candles at the paper's
         timeframe and 1m (the price); no WebSocket."""
         pairs = await paper_asset_timeframes(enabled_only=True)

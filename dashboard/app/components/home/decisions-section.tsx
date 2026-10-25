@@ -3,14 +3,22 @@ import { DecisionLogCard } from "@/components/decision-log";
 import { Section } from "@/components/section";
 import type { HomeData } from "@/server/home/loader";
 
-export function DecisionsSection({ decisions, assets }: Pick<HomeData, "decisions" | "assets">) {
+import { useWithAssets } from "./use-with-assets";
+
+export function DecisionsSection({
+  decisions,
+  assets,
+}: Pick<HomeData, "decisions" | "assets">) {
+  const data = useWithAssets(decisions, assets);
   return (
     <Section
       name="decisions"
-      data={decisions}
+      data={data}
       fallback={<CardSkeleton title="Trading Log" rows={6} />}
     >
-      {(page) => <DecisionLogCard page={page} assets={assets} />}
+      {(d) => (
+        <DecisionLogCard page={d?.value ?? null} assets={d?.assets ?? []} />
+      )}
     </Section>
   );
 }

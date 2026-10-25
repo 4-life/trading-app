@@ -13,7 +13,7 @@ Each executor is a dedicated, hardcoded strategy. Strategies are replaceable com
 
 ## Responsibilities
 
-- Run independently across every configured asset (`ASSETS`).
+- Run independently across every paper's asset ([asset universe](market-data.md#asset-universe)).
 - Run the [papers](papers.md) attached to it (`paper.executor` = this executor's name), each in its own mode (demo or live) and within its `direction` (long / short / both).
 - Read features from the [feature-engine](feature-engine.md) — never market data sources or the exchange directly.
 - Decide the market regime on its own, if the strategy needs one. There is no system-wide regime.

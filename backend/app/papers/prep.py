@@ -22,14 +22,13 @@ from app.backtest.vwap import backtest_paper as backtest_vwap
 from app.config import settings
 from app.db import async_session
 from app.exchange.base import MarketAdapter
-from app.executors.trend import REGIME_ASSET
 from app.feature_engine.backfill import backfill_features, candle_time_range
 from app.market_data.collector import (
     FUNDING_COVERAGE_TOLERANCE,
     backfill_candles,
     backfill_funding,
 )
-from app.papers.models import AVERAGING_HEDGE, AVERAGING_KINDS, HEDGE_ASSET, Paper
+from app.papers.models import AVERAGING_HEDGE, AVERAGING_KINDS, HEDGE_ASSET, REGIME_ASSET, Paper
 
 logger = logging.getLogger(__name__)
 

@@ -7,9 +7,9 @@ from datetime import UTC, datetime, timedelta
 from app.config import settings
 from app.exchange.base import MarketAdapter
 from app.exchange.source import connected_adapter
-from app.executors.trend import REGIME_ASSET
 from app.market_data.collector import FUNDING_COVERAGE_TOLERANCE, backfill_candles, backfill_funding
 from app.notifications.error_reporting import run_service
+from app.papers.models import REGIME_ASSET
 from app.papers.queries import executor_timeframes, paper_asset_timeframes
 
 logger = logging.getLogger(__name__)

@@ -86,7 +86,6 @@ async def process_queue() -> None:
 
 
 async def test_login_and_create_paper() -> None:
-    assert ASSET in settings.assets, f"{ASSET} must be in ASSETS for this test"
     async with client() as c:
         assert (await c.post("/papers", json={})).status_code == 401
         wrong = await c.post("/login", json={"password": "wrong"})
@@ -94,6 +93,9 @@ async def test_login_and_create_paper() -> None:
         login = await c.post("/login", json={"password": settings.app_password})
         assert login.status_code == 200
         state["token"] = login.json()["token"]
+        # Added already (409) or now.
+        added = await c.post("/assets", headers=auth(), json={"symbol": ASSET})
+        assert added.status_code in (201, 409), added.text
 
         created = await c.post(
             "/papers",

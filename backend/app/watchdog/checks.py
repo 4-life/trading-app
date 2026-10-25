@@ -9,6 +9,7 @@ from app.db import async_session
 from app.exchange.base import MarketAdapter
 from app.execution_engine.live import live_client
 from app.execution_engine.models import Position, TradingDecision
+from app.market_data.assets import configured_assets, probe_asset
 from app.market_data.models import OrderBookSnapshot, Trade
 from app.notifications.error_reporting import describe
 from app.papers.models import Paper
@@ -35,7 +36,7 @@ async def check_redis() -> CheckResult:
 
 async def check_exchange_connectivity(adapter: MarketAdapter) -> CheckResult:
     try:
-        await adapter.get_market_data(settings.assets[0])
+        await adapter.get_market_data(await probe_asset())
         return CheckResult("exchange_connectivity", True, "reachable")
     except Exception as e:
         return CheckResult("exchange_connectivity", False, f"unreachable: {describe(e)}")
@@ -43,7 +44,7 @@ async def check_exchange_connectivity(adapter: MarketAdapter) -> CheckResult:
 
 async def check_clock_drift(adapter: MarketAdapter) -> CheckResult:
     try:
-        md = await adapter.get_market_data(settings.assets[0])
+        md = await adapter.get_market_data(await probe_asset())
         drift = abs((datetime.now(UTC) - md.timestamp).total_seconds())
         ok = drift <= settings.clock_drift_max_seconds
         return CheckResult("clock_drift", ok, f"{drift:.2f}s drift vs exchange time")
@@ -59,7 +60,7 @@ async def check_market_data_freshness(adapter: MarketAdapter) -> list[CheckResul
     results = []
     threshold = settings.candle_poll_seconds * settings.market_data_staleness_multiplier
     async with async_session() as session:
-        for asset in (a for a in settings.assets if adapter.is_listed(a)):
+        for asset in (a for a in await configured_assets() if adapter.is_listed(a)):
             trade = await session.scalar(
                 select(func.max(Trade.exchange_timestamp)).where(Trade.asset == asset)
             )

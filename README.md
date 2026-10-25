@@ -42,7 +42,6 @@ In `.env` (`.env.example` documents every variable):
 | `APP_PASSWORD` | the dashboard login — required |
 | `SETTINGS_ENCRYPTION_KEY` | required to save the exchange API and Telegram keys in Settings; generate once: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | the local database — any values |
-| `ASSETS` | perpetuals collected live, e.g. `["BTC","ETH","SOL"]` |
 | `BACKFILL_DAYS` | candle history fetched on every `up` (220) |
 | `API_PORT` / `DASHBOARD_PORT` | 8000 / 3000 |
 
@@ -71,7 +70,6 @@ GitHub → Settings → Secrets and variables → Actions:
 | Variable | Default |
 |---|---|
 | `DOMAIN` | none — the dashboard's domain; set, the deploy ends with a health check on it |
-| `ASSETS` | `["BTC","ETH","SOL"]` |
 | `BACKFILL_DAYS` | `220` |
 | `RAW_DATA_RETENTION_HOURS` | `24` |
 | `APP_DIR` | `/home/deploy/trading-app` |
@@ -138,4 +136,4 @@ Primary execution platform: **Hyperliquid**, accessed through an exchange-agnost
 
 ## Asset Universe
 
-Configured via `ASSETS` — perpetuals of the selected provider (see [market-data: Asset Universe](docs/market-data.md#asset-universe)). Default: `["BTC"]`; scanner papers add the coins they pick.
+Added and deleted in the dashboard (**Assets** in the header) — perpetuals of the selected provider (see [market-data: Asset Universe](docs/market-data.md#asset-universe)); scanner papers add the coins they pick.

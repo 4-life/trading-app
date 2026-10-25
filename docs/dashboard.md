@@ -20,7 +20,7 @@ All API calls happen on the dashboard server (route loaders/actions), which forw
 - Title.
 - [System health](#system-health).
 - Current UTC time (`HH:MM:SS UTC`, ticking every second) — candles, logs and the server run in UTC.
-- Button that opens the [settings](#settings) modal.
+- Buttons that open the [assets](#assets) and [settings](#settings) modals.
 - Log out.
 
 ## Footer
@@ -102,6 +102,10 @@ passing and the kill switch off - one pulsing green dot, "All systems OK" and
 when it was checked; otherwise only the failing checks (red, with their
 detail) and the kill switch, if active. When the latest health load failed:
 the last known status, with a grey dot ("Health: last known").
+
+## Assets
+
+Modal with the [asset universe](market-data.md#asset-universe): each asset a tag with a trash can, and an input to add one — any symbol, as the provider names it (not checked: you know it's a real one). The trash can is off while a paper needs the asset; deleting asks first, and removes the asset with all its market data. The asset selects (New paper, the trading log's filter) list these.
 
 ## Settings
 

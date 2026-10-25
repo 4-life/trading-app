@@ -20,7 +20,6 @@ from app.executors.base import direction_allowed, recent_candles
 from app.executors.trend import (
     BEAR_SMA_DAYS,
     BREAKOUT_DAYS,
-    REGIME_ASSET,
     Bar,
     bars_for_days,
     bear_market,
@@ -34,7 +33,7 @@ from app.market_data.collector import (
     get_candles_with_retry,
 )
 from app.notifications.alerts import alert
-from app.papers.models import Paper
+from app.papers.models import REGIME_ASSET, Paper
 from app.risk_engine.blocks import unblock_paper
 from app.scanner.rules import Child, plan, top_by_volume
 from app.system.exchange_api import get_exchange_api

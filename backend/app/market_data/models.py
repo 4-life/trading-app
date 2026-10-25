@@ -7,6 +7,18 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db import Base
 
 
+class Asset(Base):
+    """A perpetual collected live - the dashboard's assets editor
+    (docs/market-data.md#asset-universe). The symbol as the provider names
+    it; nothing checks it's listed (an unlisted one is skipped, with a
+    warning)."""
+
+    __tablename__ = "assets"
+
+    symbol: Mapped[str] = mapped_column(String, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class Trade(Base):
     __tablename__ = "trades"
     __table_args__ = (Index("ix_trades_asset_time", "asset", "exchange_timestamp"),)

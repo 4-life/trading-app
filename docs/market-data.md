@@ -21,9 +21,9 @@ Market data comes from the provider of the [exchange API](dashboard.md#exchange-
 
 ## Asset Universe
 
-Every identifier in `ASSETS` is a **perpetual** of the provider, by its symbol (e.g. `BTC`). Default: `["BTC"]`.
+The assets are added and deleted in the dashboard's [assets editor](dashboard.md#assets) (the `assets` table; [`/assets`](api.md)) — each a **perpetual** of the provider, by its symbol (e.g. `BTC`). Any symbol is taken as typed: nothing checks the provider lists it (an unlisted one is skipped, below). Market data re-reads the list every 10 s and re-subscribes its WebSocket when it changes — no restart. A new asset is collected from then on; its history comes with a paper's [preparation](papers.md#preparation) backfill. An asset a paper needs can't be deleted: its own papers (a scanner's children too), any trend paper for `BTC` (the [bear-market filter](trend-strategy-engine.md#bear-market-filter)), any averaging hedge paper for `ETH`. Deleting one deletes all its market data — candles, trades, order-book snapshots, funding, open interest and features (once more on the next re-read, for rows stored in between). Migration 0032 seeded the list with the one in use — the old `ASSETS` variable if still set, else the assets collected live (order-book snapshots), else `BTC`, `ETH`, `SOL` — and every paper's own asset.
 
-**One bad asset can't take down collection for the rest**: an asset the provider doesn't list (e.g. Lighter's `XAU` while the data comes from Hyperliquid) is skipped with one warning at startup — not collected, not backfilled, not freshness-checked. A paper on it fails its [preparation](papers.md#preparation) with "isn't listed by the market-data provider".
+**One bad asset can't take down collection for the rest**: an asset the provider doesn't list (e.g. Lighter's `XAU` while the data comes from Hyperliquid) is skipped with one warning each time the list is read anew — not collected, not backfilled, not freshness-checked. A paper on it fails its [preparation](papers.md#preparation) with "isn't listed by the market-data provider".
 
 ## Collected Data
 
@@ -40,7 +40,7 @@ Every identifier in `ASSETS` is a **perpetual** of the provider, by its symbol (
 
 All timestamps are stored in UTC.
 
-The above is collected for every asset in `ASSETS` (candles at every `CANDLE_INTERVALS` scale). Coins of enabled papers outside `ASSETS` — the ones a [scanner](papers.md#scanner-papers) picked — get only **candles at their paper's timeframe and 1m** (the 1m close is the current price the portfolio and the risk engine read) **and funding**, polled like the rest (no WebSocket, no order book).
+The above is collected for every [asset](#asset-universe) (candles at every `CANDLE_INTERVALS` scale). Coins of enabled papers outside the asset list — the ones a [scanner](papers.md#scanner-papers) picked — get only **candles at their paper's timeframe and 1m** (the 1m close is the current price the portfolio and the risk engine read) **and funding**, polled like the rest (no WebSocket, no order book).
 
 ## Data Retention
 

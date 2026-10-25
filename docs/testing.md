@@ -38,7 +38,7 @@ cd backend && uv run pytest tests --deselect tests/test_pipeline.py
    - demo reset (last) clears everything demo
 3. `docker compose -f docker/test/compose.yaml down -v` always runs on exit, pass or fail.
 
-The stack uses test-only `APP_PASSWORD` / `SETTINGS_ENCRYPTION_KEY` (set in the compose file) and a 3-day backfill. Needs `.env` (Postgres credentials, `ASSETS` including `BTC`) and outbound access to Hyperliquid.
+The stack uses test-only `APP_PASSWORD` / `SETTINGS_ENCRYPTION_KEY` (set in the compose file) and a 3-day backfill. Needs `.env` (Postgres credentials; the test adds `BTC` to the assets) and outbound access to Hyperliquid.
 
 ## Simulation
 

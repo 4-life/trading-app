@@ -4,6 +4,7 @@ import { type MetaFunction, useLoaderData } from "react-router";
 import { Footer } from "@/components/footer";
 import { Header } from "@/components/header";
 import {
+  AssetsSection,
   ChartSection,
   DecisionsSection,
   DemoSection,
@@ -32,6 +33,7 @@ export const meta: MetaFunction = () => [];
 export default function Home() {
   const data = useLoaderData<typeof clientLoader>();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [assetsOpen, setAssetsOpen] = useState(false);
   useEffect(() => {
     lastData.remember(data);
   }, [data]);
@@ -45,6 +47,7 @@ export default function Home() {
       <div className="mx-auto max-w-[1600px] space-y-4 p-4 sm:p-6">
         <Header
           health={<HealthSection {...data} />}
+          onOpenAssets={() => setAssetsOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
         />
         <main className="space-y-4">
@@ -58,6 +61,7 @@ export default function Home() {
         <Footer />
       </div>
       <SettingsSection {...data} open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <AssetsSection {...data} open={assetsOpen} onOpenChange={setAssetsOpen} />
     </>
   );
 }

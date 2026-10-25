@@ -3,6 +3,7 @@ import logging
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.api.assets import router as assets_router
 from app.api.auth import require_auth
 from app.api.auth import router as auth_router
 from app.api.auto_open import router as auto_open_router
@@ -38,6 +39,7 @@ app.include_router(health_router)
 app.include_router(auth_router)
 
 for router in (
+    assets_router,
     auto_open_router,
     chart_router,
     decisions_router,

@@ -3,21 +3,13 @@ import { redirect } from "react-router";
 import { ASSET_KINDS } from "@/constants/papers";
 import { api, type ApiResult, type Loaded, load } from "@/lib/api";
 import { getToken } from "@/lib/session";
+import type { Asset } from "@/types/asset";
 import type { PaperChart } from "@/types/chart";
 import type { DecisionPage } from "@/types/decision";
 import type { Paper } from "@/types/paper";
 import type { Portfolio } from "@/types/portfolio";
 import type { Settings } from "@/types/settings";
 import type { SystemHealth } from "@/types/system-health";
-
-function configuredAssets(): string[] {
-  try {
-    const parsed: unknown = JSON.parse(process.env.ASSETS ?? "[]");
-    return Array.isArray(parsed) ? parsed.map(String) : [];
-  } catch {
-    return [];
-  }
-}
 
 // The page's data, not waited for: each part streams in as the API answers
 // - the page and its skeletons render at once (components/section.tsx).
@@ -61,7 +53,7 @@ export async function loader({ request }: { request: Request }) {
       (): ApiResult<Settings> => ({ ok: false, status: 401, error: "log in again" }),
     ),
     chart,
-    assets: configuredAssets(),
+    assets: load<Asset[]>(request, "/assets"),
   };
 }
 

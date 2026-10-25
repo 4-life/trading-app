@@ -1,3 +1,4 @@
+import { assetActions } from "@/server/actions/assets";
 import { paperActions } from "@/server/actions/papers";
 import { positionActions } from "@/server/actions/positions";
 import { settingsActions } from "@/server/actions/settings";
@@ -6,6 +7,7 @@ import type { ActionResult } from "@/types/action";
 import type { PaperSweep, SweepBatch } from "@/types/sweep";
 
 const HANDLERS: Record<string, ActionHandler> = {
+  ...assetActions,
   ...paperActions,
   ...positionActions,
   ...settingsActions,
@@ -25,5 +27,5 @@ export async function action({ request }: { request: Request }): Promise<ActionR
   if (intent === "startBatch" || intent === "stopBatch") {
     return { batch: result.data as SweepBatch };
   }
-  return intent === "saveSettings" ? { saved: true } : {};
+  return intent === "saveSettings" || intent === "addAsset" ? { saved: true } : {};
 }

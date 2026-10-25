@@ -13,14 +13,13 @@ from app.market_data.collector import PRICE_INTERVAL
 from app.market_data.models import Candle
 from app.notifications.error_reporting import run_service
 from app.order_queue import Direction, Signal
-from app.papers.models import Paper
+from app.papers.models import REGIME_ASSET, Paper
 
 # Standard settings, deliberately not tuned (docs: "Why these settings").
 BREAKOUT_DAYS = 20
 ATR_BARS = 14
 TRAIL_ATR = 3.0
 BEAR_SMA_DAYS = 200  # shorts only while BTC is below its 200-day average
-REGIME_ASSET = "BTC"
 STOP_LOSS_PCT = Decimal("0.01")  # from the entry, whatever the paper's timeframe
 # Breakout confirmation (docs: "Breakout confirmation").
 VOLUME_BARS = 20

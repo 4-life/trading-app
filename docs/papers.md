@@ -7,7 +7,7 @@ A paper is one strategy running on one asset. The owner creates papers from the 
 | Field | Value |
 |---|---|
 | `kind` | `single` (default), `scanner`, `averaging` or `averaging_hedge` — see [Kinds](#kinds) |
-| `asset` | selected from `ASSETS` only; none (`*`) for a scanner |
+| `asset` | selected from the [assets](market-data.md#asset-universe) only; none (`*`) for a scanner |
 | `timeframe` | `1m` / `5m` / `15m` / `1h` / `4h` — candle scale the executor trades this paper on |
 | `leverage` | default `1.0` |
 | `direction` | `long` / `short` / `both` |
@@ -118,7 +118,7 @@ The `scanner` service handles every scanner paper, after each candle close at it
 4. **Cleanup** — a child with no open position and no order in flight whose coin isn't a candidate any more is disabled (`disabled_by = scanner`), keeping its history. A disabled scanner opens nothing and disables its children once they're flat.
 
 - The scanner paper doesn't count in the [budget split](budget-allocator.md); each enabled child does, like any paper.
-- [Market data](market-data.md#collected-data) collects candles and funding for every enabled paper's coin, so children don't need to be in `ASSETS`.
+- [Market data](market-data.md#collected-data) collects candles and funding for every enabled paper's coin, so children don't need to be in the asset list.
 - **Live without a click:** once an [exchange API](dashboard.md#exchange-api) is set, the coins a scanner picks are created (or re-enabled) as **live** papers at once — a trend doesn't wait for a demo track record (scanner coins have no backtest). Without an API, or with a fractional leverage, they're demo. They trade only while live auto-trading is on; one enabled live paper per asset still applies (a coin already live elsewhere is skipped). Their "Go live" button stays off.
 - Deleting a scanner keeps its children (their `parent_id` is cleared).
 

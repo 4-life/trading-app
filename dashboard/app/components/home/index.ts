@@ -1,3 +1,4 @@
+export { AssetsSection } from "./assets-section";
 export { ChartSection } from "./chart-section";
 export { DecisionsSection } from "./decisions-section";
 export { DemoSection } from "./demo-section";

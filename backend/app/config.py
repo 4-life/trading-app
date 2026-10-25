@@ -29,8 +29,6 @@ class Settings(BaseSettings):
     # settings (app/system/exchange_api.py) - Hyperliquid mainnet without one.
     # Bounds every exchange REST call, so a stalled connection fails fast.
     exchange_request_timeout_seconds: float = 30.0
-    # Perpetuals collected live (docs/market-data.md#asset-universe).
-    assets: list[str] = ["BTC"]
     # Candle scales collected live for every asset. Paper timeframes must be one of them.
     candle_intervals: list[str] = ["1m", "5m", "15m", "1h", "4h"]
     candle_poll_seconds: int = 60

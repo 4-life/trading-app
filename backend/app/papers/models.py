@@ -23,6 +23,8 @@ DISABLED_BY = ("owner", "risk_engine", "scanner")
 # Backtest only, for now (docs/papers.md#averaging-hedge-papers).
 AVERAGING_HEDGE = "averaging_hedge"
 HEDGE_ASSET = "ETH"  # an averaging hedge paper's short
+# The trend strategy's bear-market filter reads it (docs/trend-strategy-engine.md).
+REGIME_ASSET = "BTC"
 KINDS = ("single", "scanner", "averaging", AVERAGING_HEDGE)
 # The kinds that trade their own asset (a scanner only creates single papers).
 TRADING_KINDS = ("single", "averaging")

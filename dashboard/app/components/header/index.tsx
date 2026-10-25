@@ -1,4 +1,4 @@
-import { Settings as SettingsIcon } from "lucide-react";
+import { Coins as CoinsIcon, Settings as SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { Form } from "react-router";
 
@@ -6,13 +6,15 @@ import { Button } from "@/components/ui/button";
 
 import { UtcClock } from "./utc-clock";
 
-// Title, system health, UTC clock, settings button, log out
+// Title, system health, UTC clock, assets and settings buttons, log out
 // (docs/dashboard.md#header).
 export function Header({
   health,
+  onOpenAssets,
   onOpenSettings,
 }: {
   health: ReactNode;
+  onOpenAssets: () => void;
   onOpenSettings: () => void;
 }) {
   return (
@@ -23,6 +25,9 @@ export function Header({
       </div>
       <div className="flex items-center gap-2">
         <UtcClock />
+        <Button variant="outline" size="sm" onClick={onOpenAssets}>
+          <CoinsIcon /> Assets
+        </Button>
         <Button variant="outline" size="sm" onClick={onOpenSettings}>
           <SettingsIcon /> Settings
         </Button>

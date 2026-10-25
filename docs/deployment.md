@@ -60,7 +60,6 @@ Settings → Secrets and variables → Actions.
 
 | Variable (optional) | Default |
 |---|---|
-| `ASSETS` | `["BTC","ETH","SOL"]` |
 | `BACKFILL_DAYS` | `220` |
 | `RAW_DATA_RETENTION_HOURS` | `24` |
 | `APP_DIR` | `/home/deploy/trading-app` — where the stack lives on the VPS |
