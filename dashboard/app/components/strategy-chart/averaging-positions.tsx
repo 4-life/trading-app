@@ -5,11 +5,9 @@ import type { BacktestTrade } from "@/types/chart";
 import { addCount, positionValue, sellCount, unitProfits } from "./backtest";
 import { OPEN_AT_END } from "./constants";
 
-// An averaging paper's backtest positions, one row each (docs/papers.md#averaging-papers);
-// an averaging hedge paper's PnL also split into the long's and its shorts'.
+// An averaging paper's backtest positions, one row each (docs/papers.md#averaging-papers).
 export function AveragingPositions({ positions }: { positions: BacktestTrade[] }) {
   const rows = [...positions].sort((a, b) => a.opened_at.localeCompare(b.opened_at));
-  const hedged = rows.some((t) => t.hedge_pnl_usd !== null);
   return (
     <div className="max-h-96 overflow-auto">
       <Table className="text-xs">
@@ -23,9 +21,7 @@ export function AveragingPositions({ positions }: { positions: BacktestTrade[] }
             <TableHead>Peak margin</TableHead>
             <TableHead>Position $</TableHead>
             <TableHead>Avg entry → close</TableHead>
-            {hedged && <TableHead>Long PnL</TableHead>}
-            {hedged && <TableHead>Shorts PnL</TableHead>}
-            <TableHead>{hedged ? "Total PnL" : "PnL"}</TableHead>
+            <TableHead>PnL</TableHead>
             <TableHead>% of margin</TableHead>
             <TableHead>Exit</TableHead>
           </TableRow>
@@ -38,7 +34,6 @@ export function AveragingPositions({ positions }: { positions: BacktestTrade[] }
             const pct = margin > 0 ? ((pnl / margin) * 100).toFixed(1) : "0";
             const value = positionValue(t);
             const sold = unitProfits(t).reduce((a, b) => a + b, 0);
-            const shorts = Number(t.hedge_pnl_usd ?? 0);
             return (
               <TableRow key={t.opened_at}>
                 <TableCell>{k + 1}</TableCell>
@@ -59,16 +54,6 @@ export function AveragingPositions({ positions }: { positions: BacktestTrade[] }
                 <TableCell>
                   {formatPrice(t.entry_price)} → {formatPrice(t.close_price)}
                 </TableCell>
-                {hedged && (
-                  <TableCell className={pnlClass(String(pnl - shorts))}>
-                    {formatUsd(pnl - shorts)}
-                  </TableCell>
-                )}
-                {hedged && (
-                  <TableCell className={pnlClass(String(shorts))}>
-                    {t.hedge_pnl_usd === null ? "—" : formatUsd(shorts)}
-                  </TableCell>
-                )}
                 <TableCell className={pnlClass(String(pnl))}>
                   {open ? "unrealized " : ""}
                   {formatUsd(pnl)}

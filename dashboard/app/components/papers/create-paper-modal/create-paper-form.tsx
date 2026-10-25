@@ -35,7 +35,7 @@ export function CreatePaperForm({
       <Select
         name="kind"
         aria-label="Type"
-        options={["single", "scanner", "averaging", "averaging_hedge"]}
+        options={["single", "scanner", "averaging"]}
         value={kind}
         onChange={(e) => {
           setKind(e.target.value);

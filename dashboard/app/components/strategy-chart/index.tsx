@@ -104,9 +104,6 @@ function AveragingSummary({ chart }: { chart: PaperChart }) {
   const pnl = trades.map((t) => Number(t.pnl_usd ?? 0));
   const margin = trades.map((t) => Number(t.margin_usd ?? 0));
   const net = pnl.reduce((a, b) => a + b, 0);
-  // An averaging hedge paper: the shorts' part of the net.
-  const hedged = chart.backtest.some((t) => t.hedge_pnl_usd !== null);
-  const shorts = trades.reduce((a, t) => a + Number(t.hedge_pnl_usd ?? 0), 0);
   // The cash the strategy needed: the most any position locked at once.
   const peak = Math.max(0, ...margin);
   const wins = pnl.filter((x) => x > 0).length;
@@ -130,12 +127,6 @@ function AveragingSummary({ chart }: { chart: PaperChart }) {
         <p>
           Averaging backtest (temporary): {trades.length} positions, {wins} won (
           {Math.round((wins / trades.length) * 100)}%), net <span className={tone(net)}>{usd(net)}</span>{" "}
-          {hedged && (
-            <>
-              (long <span className={tone(net - shorts)}>{usd(net - shorts)}</span> + shorts{" "}
-              <span className={tone(shorts)}>{usd(shorts)}</span>){" "}
-            </>
-          )}
           · most margin locked at once ${peak.toFixed(2)} (
           <span className={tone(net)}>{signed(peak > 0 ? (net / peak) * 100 : 0)}</span> on it) ·{" "}
           {(adds / trades.length).toFixed(1)} adds
@@ -168,7 +159,6 @@ function AveragingSummary({ chart }: { chart: PaperChart }) {
 // The averaging backtest's position still open when the backtest ended (its last candle).
 function OpenPosition({ position }: { position: BacktestTrade }) {
   const pnl = Number(position.pnl_usd ?? 0);
-  const shorts = position.hedge_pnl_usd === null ? null : Number(position.hedge_pnl_usd);
   const margin = Number(position.margin_usd ?? 0);
   const value = positionValue(position);
   return (
@@ -179,13 +169,6 @@ function OpenPosition({ position }: { position: BacktestTrade }) {
       position ${value.entry.toFixed(2)} → ${value.close.toFixed(2)}, peak margin ${margin.toFixed(2)},
       unrealized there <span className={tone(pnl)}>{usd(pnl)}</span> (
       <span className={tone(pnl)}>{signed(margin > 0 ? (pnl / margin) * 100 : 0)}</span>)
-      {shorts !== null && (
-        <>
-          {" "}
-          = long <span className={tone(pnl - shorts)}>{usd(pnl - shorts)}</span> + shorts{" "}
-          <span className={tone(shorts)}>{usd(shorts)}</span>
-        </>
-      )}
       .
     </p>
   );

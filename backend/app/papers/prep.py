@@ -28,7 +28,7 @@ from app.market_data.collector import (
     backfill_candles,
     backfill_funding,
 )
-from app.papers.models import AVERAGING_HEDGE, AVERAGING_KINDS, HEDGE_ASSET, REGIME_ASSET, Paper
+from app.papers.models import REGIME_ASSET, Paper
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +42,9 @@ BACKTESTS: dict[str, Callable[[Paper, datetime | None], Awaitable[object]]] = {
 
 
 def backtest_of(paper: Paper) -> Callable[[Paper, datetime | None], Awaitable[object]] | None:
-    """An averaging (hedge) paper's backtest replays its executor's entries
+    """An averaging paper's backtest replays its executor's entries
     (if that executor has a backtest); the others run their executor's."""
-    if paper.kind in AVERAGING_KINDS:
+    if paper.kind == "averaging":
         return backtest_averaging if paper.executor in BACKTESTS else None
     return BACKTESTS.get(paper.executor)
 
@@ -70,8 +70,6 @@ async def _backfill(adapter: MarketAdapter, paper: Paper) -> None:
     assets = [paper.asset]
     if paper.executor == "trend" and paper.asset != REGIME_ASSET:
         assets.append(REGIME_ASSET)
-    if paper.kind == AVERAGING_HEDGE:
-        assets.append(HEDGE_ASSET)
     for asset in assets:
         await backfill_candles(adapter, asset, paper.timeframe, start_ms, end_ms)
     await backfill_funding(

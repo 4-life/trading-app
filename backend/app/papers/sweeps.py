@@ -25,7 +25,7 @@ from app.backtest.sweep import (
 )
 from app.db import async_session
 from app.market_data.limits import market_limits
-from app.papers.models import AVERAGING_KINDS, Paper
+from app.papers.models import Paper
 
 logger = logging.getLogger(__name__)
 
@@ -343,7 +343,7 @@ async def start_batch(paper_ids: list[int], max_margin: float) -> SweepBatch:
     if missing:
         raise SweepError(f"no paper {', '.join(missing)}")
     for paper in found.values():
-        if paper.kind not in AVERAGING_KINDS:
+        if paper.kind != "averaging":
             raise SweepError(f"paper {paper.id} isn't an averaging paper")
         _check(paper, max_margin)
     busy = await _close_interrupted()

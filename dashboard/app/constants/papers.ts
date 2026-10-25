@@ -10,6 +10,6 @@ export const MANAGEMENT_FIELDS = [
 
 // The kinds with an asset of their own: prepared and charted (a scanner
 // only creates single papers).
-export const ASSET_KINDS: readonly string[] = ["single", "averaging", "averaging_hedge"];
+export const ASSET_KINDS: readonly string[] = ["single", "averaging"];
 // The kinds with position management (docs/papers.md#averaging-papers).
-export const AVERAGING_KINDS: readonly string[] = ["averaging", "averaging_hedge"];
+export const AVERAGING_KINDS: readonly string[] = ["averaging"];

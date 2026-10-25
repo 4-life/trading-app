@@ -15,7 +15,7 @@ from app.market_data.models import (
     OrderBookSnapshot,
     Trade,
 )
-from app.papers.models import AVERAGING_HEDGE, HEDGE_ASSET, REGIME_ASSET, Paper
+from app.papers.models import REGIME_ASSET, Paper
 
 # Every table keyed by asset that holds its market data.
 _DATA = (Candle, Trade, OrderBookSnapshot, FundingRate, OpenInterestSnapshot, Feature)
@@ -33,13 +33,10 @@ async def probe_asset() -> str:
 
 async def in_use(session: AsyncSession, asset: str) -> bool:
     """A paper needs the asset's data: its own papers (scanners' too), trend
-    papers (the bear-market filter reads REGIME_ASSET), averaging hedge
-    papers (their short is on HEDGE_ASSET)."""
+    papers (the bear-market filter reads REGIME_ASSET)."""
     uses = [Paper.asset == asset]
     if asset == REGIME_ASSET:
         uses.append(Paper.executor == "trend")
-    if asset == HEDGE_ASSET:
-        uses.append(Paper.kind == AVERAGING_HEDGE)
     return bool(await session.scalar(select(exists().where(or_(*uses)))))
 
 

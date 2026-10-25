@@ -13,7 +13,7 @@ from app.backtest.models import OPEN_AT_END, BacktestTrade
 from app.db import async_session
 from app.executors.paper_exits import PAPER_STOP_LOSS, PAPER_TAKE_PROFIT
 from app.market_data.models import Candle
-from app.papers.models import AVERAGING_KINDS, Paper
+from app.papers.models import Paper
 from app.system.exchange_api import maker_fee_rate
 
 logger = logging.getLogger(__name__)
@@ -33,13 +33,12 @@ class Bar:
 
 @dataclass(frozen=True)
 class Fill:
-    """An averaging position's fill: a buy (the first entry or an add), a
-    sell (a unit sold) or a hedge short's (app/backtest/hedge.py's sides, in
-    the hedge asset's price)."""
+    """An averaging position's fill: a buy (the first entry or an add) or a
+    sell (a unit sold)."""
 
     time: datetime
     price: float
-    margin: float  # a sell or a short's reduce / close: the margin it released
+    margin: float  # a sell: the margin it released
     notional: float
     side: str = "buy"
     # A sell: its unit's profit (size x (price - the unit's buy price), before
@@ -120,11 +119,11 @@ def with_paper_exits(
 
 
 async def strategy_papers(executor: str) -> list[Paper]:
-    """The executor's papers its own backtest covers - an averaging (hedge)
+    """The executor's papers its own backtest covers - an averaging
     paper's backtest is app.backtest.averaging, on the executor's entry signals."""
     async with async_session() as session:
         rows = await session.scalars(
-            select(Paper).where(Paper.executor == executor, Paper.kind.not_in(AVERAGING_KINDS))
+            select(Paper).where(Paper.executor == executor, Paper.kind != "averaging")
         )
         return list(rows.all())
 

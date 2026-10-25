@@ -39,7 +39,7 @@ from app.executors.position_management import AVERAGE_DOWN, add_terms
 from app.market_data.collector import PRICE_INTERVAL
 from app.market_data.models import Candle
 from app.notifications.alerts import alert
-from app.papers.models import AVERAGING_KINDS, Paper
+from app.papers.models import Paper
 from app.risk_engine.blocks import block_paper, is_entry_blocked, unblock_paper
 from app.risk_engine.engine import evaluate
 from app.risk_engine.models import Position as RiskPosition
@@ -434,7 +434,7 @@ async def _disable_losing_papers() -> None:
         papers = (
             await session.scalars(
                 # An averaging paper's own max margin / max drawdown are its loss limits.
-                select(Paper).where(Paper.enabled.is_(True), Paper.kind.not_in(AVERAGING_KINDS))
+                select(Paper).where(Paper.enabled.is_(True), Paper.kind != "averaging")
             )
         ).all()
     for paper in papers:

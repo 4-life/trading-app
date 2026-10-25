@@ -63,7 +63,7 @@ import logging
 import sys
 from bisect import bisect_left
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -71,7 +71,6 @@ from sqlalchemy import delete, select
 
 from app.backtest import regime, supertrend, vwap
 from app.backtest.bars import Bar, Fill, SimTrade, load_bars
-from app.backtest.hedge import SHORT_SIDES, SHORT_WITH_LONG, Hedge, bearish_candles
 from app.backtest.models import OPEN_AT_END, BacktestFill, BacktestTrade
 from app.config import settings
 from app.db import async_session
@@ -85,7 +84,7 @@ from app.executors.position_management import (
 )
 from app.market_data.limits import Limits, market_limits
 from app.notifications.error_reporting import run_service
-from app.papers.models import AVERAGING_HEDGE, AVERAGING_KINDS, HEDGE_ASSET, Paper
+from app.papers.models import Paper
 from app.system.exchange_api import maker_fee_rate
 
 logger = logging.getLogger(__name__)
@@ -94,10 +93,6 @@ LIQUIDATION_EXIT = "liquidation"  # the execution engine's maintenance-margin cl
 # With this many dip units held (the first buy not counted), the grid sells
 # them in pairs - the two cheapest at the higher one's price (backtest only).
 PAIR_FROM_DIPS = 3
-# An averaging hedge position: the bearish phase over, its shorts closed, the
-# total in profit - closed to free the margin, and a new long opened there.
-SEASON_END_EXIT = "bear_season_end"
-SEASON_REOPEN = "new_bottom"
 
 # The executors whose backtest gives an averaging paper its entries and sells.
 STRATEGY_TRADES: dict[str, Callable[[Paper, list[Bar], datetime | None], list[SimTrade]]] = {
@@ -168,9 +163,6 @@ class Position:
     # The most it may lock at once: Rules.max_margin, less past losses - never
     # more (profits are banked, not put back in) unless the rules compound.
     budget: float | None = None
-    hedge_margin: float = 0.0  # locked by its hedge's short (app/backtest/hedge.py)
-    hedge_realized: float = 0.0  # its hedge's closed shorts
-    bearish_seen: bool = False  # the trend bands closed bearish since it opened (a hedge's)
     size: float = 0.0
     cost: float = 0.0  # the notional at entry of the size held
     margin: float = 0.0  # backing the size held
@@ -182,8 +174,6 @@ class Position:
     # every signal add under the first buy.
     lots: list[tuple[float, float]] = field(default_factory=list)
     first_lot: tuple[float, float] | None = None  # the first buy's unit
-    # Signal adds held at or above the first buy (price, size) - sold only by a hedge paper.
-    signal_lots: list[tuple[float, float]] = field(default_factory=list)
 
     @property
     def entry(self) -> float:
@@ -218,22 +208,6 @@ class Position:
         bought = sum(p * q for p, q in units) / size  # the units' average buy price
         self.sell(time, price, size / self.size, fee_rate, bought)
 
-    def next_signal_sale(self, buffer: float) -> float | None:
-        """The price the lowest signal unit is sold at: its buy price plus
-        `buffer` - its fees and slippage; None without one. (A short: the highest.)"""
-        if not self.signal_lots:
-            return None
-        return self._best_signal_lot()[0] * (1 + self.sign * buffer)
-
-    def _best_signal_lot(self) -> tuple[float, float]:
-        return min(self.signal_lots, key=lambda lot: self.sign * lot[0])
-
-    def sell_signal_unit(self, time: datetime, price: float, fee_rate: float) -> None:
-        """Sells the lowest signal unit at `price`."""
-        lot = self._best_signal_lot()
-        self.signal_lots.remove(lot)
-        self.sell(time, price, lot[1] / self.size, fee_rate, lot[0])
-
     def pnl_at(self, price: float, fee_rate: float) -> float:
         """The whole PnL closed at `price`: the sells' + the size held's, after fees."""
         held = self.sign * self.size * (price - self.entry) - self.size * price * fee_rate
@@ -267,7 +241,6 @@ class Position:
         margin: float,
         leverage: float,
         fee_rate: float,
-        signal: bool = False,
         dip: bool = False,
     ) -> None:
         """`dip`: a dip add (the margin left down to ADD_AT_MARGIN_LEFT) - a
@@ -278,8 +251,6 @@ class Position:
             self.lots.append((price, notional / price))
             if not self.fills:
                 self.first_lot = self.lots[-1]
-        elif signal:
-            self.signal_lots.append((price, notional / price))
         self.fills.append(Fill(time, price, margin, notional))
         self.size += notional / price
         self.cost += notional
@@ -319,14 +290,11 @@ def states_after(
     fills: list[Fill], maintenance: float, notional: float | None = None, short: bool = False
 ) -> list[FillState]:
     """The position after each of its fills (the first entry, then the adds
-    and unwinds); a hedge short's fill leaves it as it was. `maintenance` /
+    and unwinds). `maintenance` /
     `notional`: Position.liquidation's; `short`: a short paper's position."""
     pos = Position(fills[0].time, "", fills[0].price, -1 if short else 1)
     out: list[FillState] = []
     for f in fills:
-        if f.side in SHORT_SIDES:
-            out.append(out[-1])
-            continue
         if f.side == "sell":
             pos.sell(f.time, f.price, f.notional / f.price / pos.size, 0.0)
         else:
@@ -349,13 +317,12 @@ class AveragingTrade:
     entry_reason: str
     entry_price: float  # the average entry
     give_up_price: float | None  # max_drawdown's level, None without it
-    fills: tuple[Fill, ...]  # the first entry, then every add, sale and hedge short's fill
+    fills: tuple[Fill, ...]  # the first entry, then every add and sale
     margin: float  # the peak margin: the most locked at once
     closed_at: datetime
     close_price: float
     exit_reason: str
     pnl_usd: float  # net of every fee
-    hedge_pnl_usd: float = 0.0  # its hedge's shorts (app/backtest/hedge.py), net of fees
     direction: str = "long"
 
     @property
@@ -363,12 +330,8 @@ class AveragingTrade:
         return sum(f.side == "buy" for f in self.fills) - 1
 
     @property
-    def total_pnl_usd(self) -> float:
-        return self.pnl_usd + self.hedge_pnl_usd
-
-    @property
     def margin_return_pct(self) -> float:
-        return self.total_pnl_usd / self.margin * 100
+        return self.pnl_usd / self.margin * 100
 
 
 def _close(
@@ -403,7 +366,7 @@ def _give_up_price(pos: Position, max_drawdown: float) -> float:
 def _can_add(pos: Position, margin: float) -> bool:
     """An add of `margin` stays within the position's budget (the cash a real
     account has)."""
-    return pos.budget is None or pos.margin + pos.hedge_margin + margin <= pos.budget
+    return pos.budget is None or pos.margin + margin <= pos.budget
 
 
 def _down_to_low(pos: Position, bar: Bar, rules: Rules, fee_rate: float) -> AveragingTrade | None:
@@ -440,34 +403,6 @@ def _down_to_low(pos: Position, bar: Bar, rules: Rules, fee_rate: float) -> Aver
         pos.buy(bar.time, fill, rules.add_size, rules.add_leverage, fee_rate, dip=True)
 
 
-def _hedge_step(hedge: Hedge, pos: Position, bar: Bar, fee_rate: float, compound: bool) -> float:
-    """The hedge at `bar`'s close with `pos` open: the PnL its short realized
-    there - into the position's budget (the cash for its adds)."""
-    can_fund = float("inf") if pos.budget is None else pos.budget - pos.margin - pos.hedge_margin
-    long_pnl = pos.pnl_at(bar.close, fee_rate)
-    realized = hedge.step(bar.time, long_pnl, pos.cost, pos.margin, can_fund, pos.hedge_realized)
-    pos.hedge_realized += realized
-    pos.hedge_margin = hedge.margin
-    pos.peak_margin = max(pos.peak_margin, pos.margin + pos.hedge_margin)
-    pos.fills.extend(hedge.take_fills())
-    if pos.budget is not None and hedge.max_margin is not None:
-        pos.budget += realized
-        if not compound:
-            pos.budget = min(pos.budget, hedge.max_margin)
-    return realized
-
-
-def _shorts(hedge: Hedge | None, pos: Position, time: datetime) -> tuple[float, float]:
-    """A hedged position's shorts at `time`'s close: their PnL - realized so
-    far plus the open short's at the hedge asset's close - and the open one's
-    margin; (0, 0) without a hedge."""
-    if hedge is None:
-        return 0.0, 0.0
-    price = hedge.price_at(time)
-    held = 0.0 if hedge.short is None or price is None else hedge.short.pnl(price, hedge.fee_rate)
-    return pos.hedge_realized + held, hedge.margin
-
-
 def in_trend(bars: list[Bar], trades: Sequence[SimTrade], direction: str = "long") -> set[datetime]:
     """The candles the strategy's own trade in `direction` is still open at
     the close of - opened on it or before, sold after it (or never): its
@@ -490,21 +425,11 @@ def simulate(
     fee_rate: float = 0.0,
     start: datetime | None = None,
     signals_held: Sequence[SimTrade] = (),
-    hedge: Hedge | None = None,
 ) -> list[AveragingTrade]:
     """From `start`, one position at a time; `entries`: the strategy's
     trades - their long entries open the positions, their exits are the
     sell signals; `signals_held`: its long signals on any candle (its own
-    trade held or not) - entries and signal adds too. `hedge`: a short on
-    another asset at each candle's close while a position is open; its
-    margin is locked from the budget and its PnL goes into it. With it, the
-    signal units are sold too - each at its buy price plus the unwind
-    buffer, on a candle's way up, while the position is in loss there and
-    the trend bands closed bearish on the candle before; and once the bands
-    close not bearish after a bearish close since the position opened, with
-    no short open and its total (the long's + its shorts' PnL) in profit, it
-    closes at that close (SEASON_END_EXIT) and a new one opens there
-    (SEASON_REOPEN) - the budget allowing."""
+    trade held or not) - entries and signal adds too."""
     directions = rules.directions
     signals: dict[str, dict[datetime, SimTrade]] = {d: {} for d in directions}
     sells: dict[str, dict[datetime, SimTrade]] = {d: {} for d in directions}
@@ -531,14 +456,9 @@ def simulate(
         return cash if rules.compound else min(cash, rules.max_margin)
 
     def open_at(time: datetime, reason: str, price: float, sign: int) -> Position:
-        """A new position on the cash; compounding, its hedge's thresholds
-        (the share of the max margin) are on its budget instead."""
-        opened = Position(time, reason, price, sign, cap(budget))
-        if hedge is not None and rules.compound:
-            hedge.max_margin = opened.budget
-        return opened
+        """A new position on the cash."""
+        return Position(time, reason, price, sign, cap(budget))
 
-    bearish_before = False  # the trend bands closed bearish on the previous candle (a hedge's)
     for bar in bars:
         if pos is not None:
             sign = pos.sign
@@ -556,42 +476,23 @@ def simulate(
             while level is not None and sign * (favourable - level) >= 0:
                 pos.unwind(bar.time, _better(sign, level, bar.open), fee_rate)
                 level = pos.next_unwind(buffer)
-            sale = pos.next_signal_sale(buffer) if unwinds and bearish_before else None
-            while sale is not None and sign * (favourable - sale) >= 0:
-                price = _better(sign, sale, bar.open)
-                if pos.pnl_at(price, fee_rate) >= 0:
-                    break
-                pos.sell_signal_unit(bar.time, price, fee_rate)
-                sale = pos.next_signal_sale(buffer)
             sell = sells[direction].get(bar.time)
-            # A hedged position's take-profit counts its shorts too: their PnL
-            # and margin (the short closes with the long).
-            shorts_pnl, shorts_margin = _shorts(hedge, pos, bar.time)
-            margin = pos.margin + shorts_margin
+            margin = pos.margin
             if rules.intraday:
                 # The take-profit at once: the price where the whole position's PnL
                 # reaches it - not in a candle that added units, as the unwinds.
-                gain = rules.take_profit * margin - pos.realized - shorts_pnl
+                gain = rules.take_profit * margin - pos.realized
                 target = pos.entry + sign * gain / pos.size
                 if closed is None and not added and sign * (favourable - target) >= 0:
                     fill = _better(sign, target, bar.open)
                     closed = _close(pos, bar, fill, TAKE_PROFIT_EXIT, rules, fee_rate)
             elif closed is None and sell is not None and sell.close_price is not None:
                 # The whole position: its unwinds' realized PnL + the size held (as live).
-                pnl = pos.realized + sign * pos.size * (sell.close_price - pos.entry) + shorts_pnl
+                pnl = pos.realized + sign * pos.size * (sell.close_price - pos.entry)
                 if pnl >= rules.take_profit * margin:
                     reason = f"{TAKE_PROFIT_EXIT}:{sell.exit_reason}"
                     closed = _close(pos, bar, sell.close_price, reason, rules, fee_rate)
             if closed is not None:
-                hedge_price = hedge.price_at(bar.time) if hedge is not None else None
-                if hedge is not None and hedge.short is not None and hedge_price is not None:
-                    # No long to hedge: the short closes with it.
-                    realized = hedge.close(bar.time, SHORT_WITH_LONG, hedge_price)
-                    pos.hedge_realized += realized
-                    if budget is not None:
-                        budget += realized
-                    closed = replace(closed, fills=(*closed.fills, *hedge.take_fills()))
-                closed = replace(closed, hedge_pnl_usd=pos.hedge_realized)
                 trades.append(closed)
                 pos = None
                 if budget is not None:
@@ -602,42 +503,9 @@ def simulate(
                     # The trend still on: a fresh position at the candle's close.
                     pos = open_at(bar.time, REOPEN_IN_TREND, bar.close, sign)
                     pos.buy(bar.time, bar.close, rules.initial_size, rules.leverage, fee_rate)
-            else:
-                if signal is not None and _can_add(pos, rules.initial_size):
-                    # A signal add, sized like the first entry.
-                    pos.buy(
-                        bar.time,
-                        signal.entry_price,
-                        rules.initial_size,
-                        rules.leverage,
-                        fee_rate,
-                        signal=True,
-                    )
-                if hedge is not None:
-                    realized = _hedge_step(hedge, pos, bar, fee_rate, rules.compound)
-                    if budget is not None:
-                        budget += realized
-                    pos.bearish_seen = pos.bearish_seen or bar.time in hedge.bearish
-                    total = pos.pnl_at(bar.close, fee_rate) + pos.hedge_realized
-                    if (
-                        pos.bearish_seen
-                        and bar.time not in hedge.bearish
-                        and hedge.short is None
-                        and total > 0
-                    ):
-                        # The bear phase over: closed to free the margin, and the
-                        # long opened again - a new bottom.
-                        closed = _close(pos, bar, bar.close, SEASON_END_EXIT, rules, fee_rate)
-                        trades.append(replace(closed, hedge_pnl_usd=pos.hedge_realized))
-                        if budget is not None:
-                            budget += closed.pnl_usd
-                        pos = None
-                        if budget is None or budget >= rules.initial_size:
-                            pos = open_at(bar.time, SEASON_REOPEN, bar.close, sign)
-                            pos.buy(
-                                bar.time, bar.close, rules.initial_size, rules.leverage, fee_rate
-                            )
-        bearish_before = hedge is not None and bar.time in hedge.bearish
+            elif signal is not None and _can_add(pos, rules.initial_size):
+                # A signal add, sized like the first entry.
+                pos.buy(bar.time, signal.entry_price, rules.initial_size, rules.leverage, fee_rate)
         funded = budget is None or budget >= rules.initial_size
         # Flat: the first direction signalling here opens one (both: a long first).
         signal = next((signals[d][bar.time] for d in directions if bar.time in signals[d]), None)
@@ -646,12 +514,7 @@ def simulate(
             pos = open_at(bar.time, signal.entry_reason, price, _sign(signal.direction))
             pos.buy(bar.time, price, rules.initial_size, rules.leverage, fee_rate)
     if pos is not None and bars:
-        last = _close(pos, bars[-1], bars[-1].close, OPEN_AT_END, rules, fee_rate)
-        hedge_price = hedge.price_at(bars[-1].time) if hedge is not None else None
-        if hedge is not None and hedge.short is not None and hedge_price is not None:
-            # Its short still open too: valued at the hedge asset's last close (no fill).
-            pos.hedge_realized += hedge.close(bars[-1].time, None, hedge_price)
-        trades.append(replace(last, hedge_pnl_usd=pos.hedge_realized))
+        trades.append(_close(pos, bars[-1], bars[-1].close, OPEN_AT_END, rules, fee_rate))
     return trades
 
 
@@ -698,11 +561,6 @@ async def backtest_paper(paper: Paper, start: datetime | None) -> list[Averaging
     start = start or paper.backtest_start
     signals_of = ENTRY_SIGNALS.get(paper.executor)
     fee_rate = float(await maker_fee_rate())
-    hedge = None
-    if paper.kind == AVERAGING_HEDGE:
-        hedged = Paper(asset=HEDGE_ASSET, timeframe=paper.timeframe)
-        hedge_bars = {b.time: b for b in await load_bars(hedged)}
-        hedge = Hedge(hedge_bars, bearish_candles(bars), fee_rate, rules.add_size, rules.max_margin)
     simulated = simulate(
         bars,
         trades_of(paper, bars, start),
@@ -710,7 +568,6 @@ async def backtest_paper(paper: Paper, start: datetime | None) -> list[Averaging
         fee_rate,
         start,
         signals_of(paper, bars) if signals_of is not None else [],
-        hedge,
     )
     # A position still open on the last candle is stored too (`open_at_end`, at
     # the last close - unrealized); the totals count the closed ones.
@@ -733,8 +590,7 @@ async def backtest_paper(paper: Paper, start: datetime | None) -> list[Averaging
                 exit_reason=t.exit_reason,
                 return_pct=Decimal(str(round(t.margin_return_pct / rules.leverage, 6))),
                 margin_usd=Decimal(str(round(t.margin, 6))),
-                pnl_usd=Decimal(str(round(t.total_pnl_usd, 6))),
-                hedge_pnl_usd=Decimal(str(round(t.hedge_pnl_usd, 6))) if hedge else None,
+                pnl_usd=Decimal(str(round(t.pnl_usd, 6))),
                 created_at=now,
             )
             session.add(row)
@@ -760,14 +616,14 @@ async def backtest_paper(paper: Paper, start: datetime | None) -> list[Averaging
         paper.timeframe,
         paper.executor,
         len(closed),
-        sum(t.total_pnl_usd > 0 for t in closed),
+        sum(t.pnl_usd > 0 for t in closed),
         sum(t.exit_reason in (MAX_DRAWDOWN_EXIT, OUT_OF_MARGIN_EXIT) for t in closed),
         sum(t.exit_reason == LIQUIDATION_EXIT for t in closed),
-        sum(t.total_pnl_usd for t in closed),
+        sum(t.pnl_usd for t in closed),
         max((t.margin for t in trades), default=0.0),
         "".join(
             f"; open: {t.adds} adds, {t.margin:.2f} USD peak margin, "
-            f"{t.total_pnl_usd:+.2f} USD unrealized"
+            f"{t.pnl_usd:+.2f} USD unrealized"
             for t in trades
             if t.exit_reason == OPEN_AT_END
         ),
@@ -778,7 +634,7 @@ async def backtest_paper(paper: Paper, start: datetime | None) -> list[Averaging
 async def main() -> None:
     start = datetime.fromisoformat(sys.argv[1]).replace(tzinfo=UTC) if len(sys.argv) > 1 else None
     async with async_session() as session:
-        papers = (await session.scalars(select(Paper).where(Paper.kind.in_(AVERAGING_KINDS)))).all()
+        papers = (await session.scalars(select(Paper).where(Paper.kind == "averaging"))).all()
     if not papers:
         logger.info("no averaging papers - nothing to backtest")
     for paper in papers:

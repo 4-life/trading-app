@@ -69,7 +69,7 @@ from app.executors.position_management import MAX_DRAWDOWN_EXIT, OUT_OF_MARGIN_E
 from app.market_data.collector import backfill_candles
 from app.market_data.limits import Limits, market_limits
 from app.notifications.error_reporting import run_service
-from app.papers.models import AVERAGING_KINDS, Paper
+from app.papers.models import Paper
 from app.system.exchange_api import maker_fee_rate
 
 logger = logging.getLogger(__name__)
@@ -390,7 +390,7 @@ def strategy_inputs(
 def check_sweepable(paper: Paper) -> None:
     """Raises SweepError for a paper no sweep can run on - an averaging
     paper's sweep (here) or a single paper's (app/backtest/exit_sweep.py)."""
-    if paper.kind not in (*AVERAGING_KINDS, "single"):
+    if paper.kind not in ("averaging", "single"):
         raise SweepError("not an averaging or single paper")
     if paper.executor not in STRATEGY_TRADES or paper.executor not in ENTRY_SIGNALS:
         raise SweepError(f"{paper.executor} has no backtest")
@@ -418,13 +418,11 @@ async def plan_sweep(
     `max_leverage` (also capped at the asset's max), `max_margin` as the
     budget instead of the paper's - one chunk per leverage x initial size."""
     check_sweepable(paper)
-    if paper.kind not in AVERAGING_KINDS:
+    if paper.kind != "averaging":
         raise SweepError("not an averaging paper")
     bars = await load_bars(paper)
     if len(bars) < 2:
         raise SweepError("no candles")
-    if paper.kind != "averaging":
-        logger.warning("paper %d: the hedge isn't swept - the long alone", paper.id)
     end = bars[-1].time
     start = max(bars[0].time, end - timedelta(days=PAPER_DAYS))
     split = start + (end - start) * SPLIT

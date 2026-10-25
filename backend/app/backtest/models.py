@@ -38,17 +38,12 @@ class BacktestTrade(Base):
     # put in and the PnL net of fees, in USD; NULL for the other backtests.
     margin_usd: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
     pnl_usd: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
-    # An averaging hedge paper's position: its shorts' part of pnl_usd
-    # (app/backtest/hedge.py), net of fees; NULL otherwise.
-    hedge_pnl_usd: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class BacktestFill(Base):
     """A fill of an averaging paper's backtest position - a buy (its first
-    entry or an add), a sell (a unit sold) or a hedge short's (side SHORT_*
-    of app/backtest/hedge.py, at the hedge asset's price) - temporary, like
-    BacktestTrade."""
+    entry or an add) or a sell (a unit sold) - temporary, like BacktestTrade."""
 
     __tablename__ = "backtest_fills"
 
@@ -61,8 +56,7 @@ class BacktestFill(Base):
     margin_usd: Mapped[Decimal] = mapped_column(Numeric)  # a sell: the margin released
     notional_usd: Mapped[Decimal] = mapped_column(Numeric)
     side: Mapped[str] = mapped_column(String, default="buy", server_default="buy")
-    # A sell: its unit's profit, before fees; a hedge short's reduce / close
-    # (app/backtest/hedge.py): the PnL it realized. NULL otherwise.
+    # A sell: its unit's profit, before fees. NULL otherwise.
     pnl_usd: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
 
 

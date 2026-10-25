@@ -20,18 +20,12 @@ TIMEFRAMES = ("1m", "5m", "15m", "1h", "4h")
 DIRECTIONS = ("long", "short", "both")
 MODES = ("demo", "live")
 DISABLED_BY = ("owner", "risk_engine", "scanner")
-# Backtest only, for now (docs/papers.md#averaging-hedge-papers).
-AVERAGING_HEDGE = "averaging_hedge"
-HEDGE_ASSET = "ETH"  # an averaging hedge paper's short
 # The trend strategy's bear-market filter reads it (docs/trend-strategy-engine.md).
 REGIME_ASSET = "BTC"
-KINDS = ("single", "scanner", "averaging", AVERAGING_HEDGE)
-# The kinds that trade their own asset (a scanner only creates single papers).
+KINDS = ("single", "scanner", "averaging")
+# The kinds that trade their own asset (a scanner only creates single papers):
+# prepared (backfill, backtest) and charted.
 TRADING_KINDS = ("single", "averaging")
-# The kinds with an asset of their own: prepared (backfill, backtest) and charted.
-ASSET_KINDS = (*TRADING_KINDS, AVERAGING_HEDGE)
-# The kinds with position management (docs/papers.md#averaging-papers).
-AVERAGING_KINDS = ("averaging", AVERAGING_HEDGE)
 # A new paper is backfilled, then backtested, before it trades (docs/papers.md#preparation).
 PREP_STATUSES = ("backfilling", "backtesting", "failed")
 # A scanner paper's asset - it has none of its own (docs/papers.md#kinds).

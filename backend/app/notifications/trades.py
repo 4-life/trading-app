@@ -14,7 +14,7 @@ from app.db import async_session
 from app.execution_engine.models import Order, Position, TradingDecision
 from app.executors.position_management import AVERAGE_DOWN, SIGNAL_ADD
 from app.notifications.telegram import send_telegram
-from app.papers.models import AVERAGING_KINDS, Paper
+from app.papers.models import Paper
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ def trade_message(
     direction (long up), a close's result (profit up). An averaging paper's
     kind is in the head - it has no SL / TP of its own. `open_margin`: the
     mode's open positions' margin together, this one's included."""
-    averaging = paper.kind in AVERAGING_KINDS
+    averaging = paper.kind == "averaging"
     kind = f" {paper.kind}" if averaging else ""
     head = f"{paper.asset} {paper.timeframe} {paper.executor}{kind} #{paper.id}"
     if opened:

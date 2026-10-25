@@ -27,12 +27,9 @@ from app.execution_engine.models import (
 from app.market_data.assets import configured_assets
 from app.market_data.limits import all_market_limits, market_limits
 from app.papers.models import (
-    ASSET_KINDS,
-    AVERAGING_HEDGE,
-    AVERAGING_KINDS,
-    HEDGE_ASSET,
     MARKET,
     POSITION_MANAGEMENT,
+    TRADING_KINDS,
     Paper,
 )
 from app.papers.prep import backtest_of
@@ -121,10 +118,10 @@ _AVERAGING_REQUIRED = (
 
 
 def _check_management(kind: str, m: PositionManagement) -> None:
-    """Required on an averaging (hedge) paper, not allowed on the other kinds."""
+    """Required on an averaging paper, not allowed on the other kinds."""
     # intraday / compound_margin / reopen_in_trend: False = unset.
     values = m.model_dump(include=set(POSITION_MANAGEMENT))
-    if kind in AVERAGING_KINDS:
+    if kind == "averaging":
         missing = [name for name in _AVERAGING_REQUIRED if values[name] is None]
         if missing:
             raise HTTPException(
@@ -187,7 +184,7 @@ class PaperOut(PositionManagement, PaperExits):
 
 
 class PaperCreate(PositionManagement, PaperExits):
-    kind: Literal["single", "scanner", "averaging", "averaging_hedge"] = "single"
+    kind: Literal["single", "scanner", "averaging"] = "single"
     # Required but for a scanner paper, which has none.
     asset: str | None = None
     timeframe: Literal["1m", "5m", "15m", "1h", "4h"]
@@ -289,10 +286,6 @@ async def create_paper(payload: PaperCreate) -> PaperOut:
     _check_exits(payload.kind, payload)
     if payload.kind != "scanner":
         await _check_leverage(payload.asset, payload.leverage, payload.add_leverage)
-    if payload.kind == AVERAGING_HEDGE and payload.direction != "long":
-        raise HTTPException(status_code=422, detail="an averaging hedge paper is long only")
-    if payload.kind == AVERAGING_HEDGE and payload.asset == HEDGE_ASSET:
-        raise HTTPException(status_code=422, detail=f"the hedge is on {HEDGE_ASSET}: pick another")
     # An averaging paper: its strategy's entries in its direction, short too;
     # both - each position the direction of its entry.
     supported = _EXECUTOR_DIRECTIONS[payload.executor]
@@ -310,7 +303,7 @@ async def create_paper(payload: PaperCreate) -> PaperOut:
     paper = Paper(
         **payload.model_dump(),
         # A paper with an asset is backfilled (and backtested) before it trades.
-        prep_status="backfilling" if payload.kind in ASSET_KINDS else None,
+        prep_status="backfilling" if payload.kind in TRADING_KINDS else None,
         mode="demo",
         profitability_demo=Decimal(0),
         profitability_live=Decimal(0),
@@ -355,7 +348,7 @@ async def update_paper(paper_id: int, payload: PaperUpdate) -> PaperOut:
             setattr(paper, name, value)
         paper.updated_at = datetime.now(UTC)
         await session.commit()
-    if paper.kind in AVERAGING_KINDS and paper.prep_status is None:
+    if paper.kind == "averaging" and paper.prep_status is None:
         await backtest_averaging(paper, None)
     elif exits != (paper.stop_loss_pct, paper.price_take_profit_pct) and paper.prep_status is None:
         backtest = backtest_of(paper)
@@ -604,8 +597,6 @@ async def switch_to_live(paper_id: int) -> PaperOut:
                 status_code=409,
                 detail="scanner coins go live on their own once an exchange API is set",
             )
-        if paper.kind == AVERAGING_HEDGE:
-            raise HTTPException(status_code=409, detail="an averaging hedge is backtest only")
         if not paper.enabled:
             raise HTTPException(status_code=409, detail="paper is disabled")
         backtest = (await _backtest_returns(session, paper.id)).get(paper.id)

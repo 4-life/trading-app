@@ -13,9 +13,7 @@ export interface Paper {
   executor: string;
   // 'scanner': no asset of its own - creates single papers (docs/papers.md#kinds).
   // 'averaging': a single paper with position management (docs/papers.md#averaging-papers).
-  // 'averaging_hedge': averaging fuelled by an ETH short - backtest only
-  // (docs/papers.md#averaging-hedge-papers).
-  kind: "single" | "scanner" | "averaging" | "averaging_hedge";
+  kind: "single" | "scanner" | "averaging";
   parent_id: number | null;
   // backfilling / backtesting / failed; null = ready (docs/papers.md#preparation).
   prep_status: "backfilling" | "backtesting" | "failed" | null;

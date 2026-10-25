@@ -32,7 +32,7 @@ from app.executors.vwap_signals import lines, signal_at
 from app.feature_engine.engine import INTERVAL_MINUTES
 from app.market_data.limits import market_limits
 from app.market_data.models import Candle
-from app.papers.models import AVERAGING_HEDGE, HEDGE_ASSET, Paper
+from app.papers.models import Paper
 
 router = APIRouter()
 
@@ -70,9 +70,6 @@ class CandleOut(BaseModel):
     high: Decimal
     low: Decimal
     close: Decimal
-    # An averaging hedge paper's: the hedge asset's close at this candle (its
-    # short's price, app/backtest/hedge.py); null otherwise or without one.
-    hedge_close: Decimal | None = None
 
 
 class LiquidityZoneOut(BaseModel):
@@ -144,13 +141,11 @@ class BacktestFillOut(BaseModel):
     price: Decimal
     margin_usd: Decimal  # a sell: the margin it released
     notional_usd: Decimal
-    # buy (the first entry or an add) | sell (a unit sold) | a hedge short's
-    # short_* (app/backtest/hedge.py, at the hedge asset's price).
+    # buy (the first entry or an add) | sell (a unit sold).
     side: str
-    # A sell: its unit's profit (before fees); a short's reduce / close: its PnL.
+    # A sell: its unit's profit (before fees).
     realized_pnl_usd: Decimal | None
-    # The position right after this fill (app/backtest/averaging.py's states_after;
-    # a short's fill: the long's, unchanged).
+    # The position right after this fill (app/backtest/averaging.py's states_after).
     total_margin_usd: float
     avg_entry: float
     leverage: float
@@ -172,8 +167,6 @@ class BacktestTradeOut(BaseModel):
     # and its buys (the first entry, then every add); null / empty otherwise.
     margin_usd: Decimal | None
     pnl_usd: Decimal | None
-    # An averaging hedge paper's position: its shorts' part of pnl_usd; null otherwise.
-    hedge_pnl_usd: Decimal | None
     fills: list[BacktestFillOut]
 
 
@@ -250,30 +243,9 @@ async def _load_candles(
     return [ChartCandle(*r) for r in (rows if oldest else reversed(rows))]
 
 
-async def _candles_out(
-    session: AsyncSession, paper: Paper, candles: list[ChartCandle]
-) -> list[CandleOut]:
-    """`candles` out - an averaging hedge paper's with the hedge asset's closes."""
-    hedge: dict[datetime, Decimal] = {}
-    if paper.kind == AVERAGING_HEDGE and candles:
-        rows = await session.execute(
-            select(Candle.open_time, Candle.close).where(
-                Candle.asset == HEDGE_ASSET,
-                Candle.interval == paper.timeframe,
-                Candle.open_time >= candles[0].open_time,
-                Candle.open_time <= candles[-1].open_time,
-            )
-        )
-        hedge = {t: c for t, c in rows.all()}
+def _candles_out(candles: list[ChartCandle]) -> list[CandleOut]:
     return [
-        CandleOut(
-            time=c.open_time,
-            open=c.open,
-            high=c.high,
-            low=c.low,
-            close=c.close,
-            hedge_close=hedge.get(c.open_time),
-        )
+        CandleOut(time=c.open_time, open=c.open, high=c.high, low=c.low, close=c.close)
         for c in candles
     ]
 
@@ -524,7 +496,7 @@ async def paper_chart(
                 .order_by(Order.created_at)
             )
         ).all()
-        candles_out = await _candles_out(session, paper, candles)
+        candles_out = _candles_out(candles)
 
     # Same input as the executor: closed candles (the newest one is forming).
     closed = window[:-1]
@@ -599,7 +571,6 @@ async def paper_chart(
                 return_pct=t.return_pct,
                 margin_usd=t.margin_usd,
                 pnl_usd=t.pnl_usd,
-                hedge_pnl_usd=t.hedge_pnl_usd,
                 fills=_fills_out(fills_of.get(t.id, []), maintenance, t.direction == "short"),
             )
             for t in backtest
@@ -678,7 +649,7 @@ async def paper_candles(
             )
         warmup = await _load_candles(session, paper, CALC_BARS, before=chunk[0].open_time)
         after = await _load_candles(session, paper, CHUNK_OVERLAP, since=before, oldest=True)
-        chunk_out = await _candles_out(session, paper, chunk)
+        chunk_out = _candles_out(chunk)
     overlays = await asyncio.to_thread(
         _chunk_overlays, paper.executor, paper.direction, warmup, chunk, after
     )

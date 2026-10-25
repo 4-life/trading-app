@@ -11,8 +11,6 @@ export interface ChartCandle {
   high: string;
   low: string;
   close: string;
-  // An averaging hedge paper's: the hedge asset's close (its short's price).
-  hedge_close: string | null;
 }
 
 export type SwingKind = "HH" | "LL" | "HL" | "LH";
@@ -65,22 +63,19 @@ export interface BacktestTrade {
   // and its buys (the first entry, then every add); null / empty otherwise.
   margin_usd: string | null;
   pnl_usd: string | null;
-  // An averaging hedge position: its shorts' part of pnl_usd; null otherwise.
-  hedge_pnl_usd: string | null;
   fills: BacktestFill[];
 }
 
 export interface BacktestFill {
-  // a buy: the first entry or an add; a sell: a unit sold (a dip unit unwound,
-  // or a signal unit while in loss and bearish); short_*: a hedge short's fill.
-  side: "buy" | "sell" | `short_${string}`;
+  // a buy: the first entry or an add; a sell: a unit sold (a dip unit unwound).
+  side: "buy" | "sell";
   time: string;
-  price: string; // a short's: the hedge asset's
-  margin_usd: string; // a sell or a short's reduce / close: the margin released
+  price: string;
+  margin_usd: string; // a sell: the margin released
   notional_usd: string;
-  // A sell: its unit's profit (before fees); a short's reduce / close: its PnL.
+  // A sell: its unit's profit (before fees).
   realized_pnl_usd: string | null;
-  // The position right after this fill (a short's: the long's, unchanged).
+  // The position right after this fill.
   total_margin_usd: number;
   avg_entry: number;
   leverage: number;

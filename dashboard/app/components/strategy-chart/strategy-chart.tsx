@@ -20,11 +20,10 @@ import { formatDateTime, formatPrice, formatUsd, pnlPercent, priceDigits } from 
 import type { BandPoint, CandleChunk, ChartSwing, LiquidityZone, PaperChart, SwingKind, VwapPoint } from '@/types/chart';
 
 import { fetchCandleChunk } from './api';
-import { addCount, isShortFill, positionValue, stateAt, unitProfits } from './backtest';
-import { FORCED_EXITS, INDICATORS, OPEN_AT_END, SHORT_FILLS } from './constants';
+import { addCount, positionValue, stateAt, unitProfits } from './backtest';
+import { FORCED_EXITS, INDICATORS, OPEN_AT_END } from './constants';
 import { useHiddenIndicators } from './hooks/use-hidden-indicators';
-import { Path } from './path';
-import { type Point, Rectangle } from './rectangle';
+import { Rectangle } from './rectangle';
 import { Segment } from './segment';
 import type { Indicator } from './types';
 import { VerticalLine } from './vertical-line';
@@ -39,7 +38,6 @@ const AMBER = '#f59e0b';
 const MUTED = '#8b8b8b';
 const VIOLET = '#a855f7';
 const CYAN = '#06b6d4'; // an averaging backtest's unwinds - no candle shares it
-const PINK = '#ec4899'; // an averaging hedge backtest's short fills
 const GRID = 'rgba(139, 139, 139, 0.15)';
 const ZONE_FILL = { low: 'rgba(34, 197, 94, 0.25)', high: 'rgba(239, 68, 68, 0.25)' };
 
@@ -221,25 +219,13 @@ function tradesAt(chart: PaperChart, t: number): InfoRow[] {
       // The position at this candle's close (its fills so far, before fees).
       const candle = chart.candles.find((c) => sec(c.time) === t);
       if (candle) {
-        const hedgeClose = candle.hedge_close ? Number(candle.hedge_close) : null;
-        const now = stateAt(b, t + step, Number(candle.close), hedgeClose);
+        const now = stateAt(b, t + step, Number(candle.close));
         rows.push({
           text:
             `now: avg ${formatPrice(String(now.avgEntry))} · margin ${formatUsd(String(now.margin))} ` +
             `· PnL ${formatUsd(String(now.pnl))}`,
           color: result(now.pnl),
         });
-        const hedged = b.fills.some(isShortFill);
-        if (hedged) {
-          const shortPnl = now.shortPnl;
-          rows.push({
-            text:
-              `short now: margin ${formatUsd(String(now.shortMargin))} · PnL ` +
-              `${shortPnl === null ? '—' : formatUsd(String(shortPnl))}` +
-              (shortPnl === null ? '' : ` · total ${formatUsd(String(now.pnl + shortPnl))}`),
-            color: PINK,
-          });
-        }
       }
       rows.push({
         text:
@@ -247,30 +233,11 @@ function tradesAt(chart: PaperChart, t: number): InfoRow[] {
           `(${((pnl / margin) * 100).toFixed(1)}% of margin)`,
         color: result(pnl),
       });
-      if (b.hedge_pnl_usd !== null) {
-        // An averaging hedge position: the long's part and its shorts'.
-        const shorts = Number(b.hedge_pnl_usd);
-        rows.push({
-          text: `= long ${formatUsd(String(pnl - shorts))} + shorts ${formatUsd(b.hedge_pnl_usd)}`,
-          color: result(shorts),
-        });
-      }
       rows.push({ text: `${b.entry_reason ?? '—'} → ${ended ? 'open at the test end' : b.exit_reason}` });
       // The fills on this candle, each with the position right after it.
       const profits = unitProfits(b);
       b.fills.forEach((f, k) => {
         if (sec(f.time) < t || sec(f.time) >= t + step) {
-          return;
-        }
-        if (isShortFill(f)) {
-          // The short is on the hedge asset: its price, its margin, its realized PnL.
-          const pnl = f.realized_pnl_usd === null ? '' : `, PnL ${formatUsd(f.realized_pnl_usd)}`;
-          rows.push({
-            text:
-              `${SHORT_FILLS[f.side] ?? f.side} · ETH ${formatPrice(f.price)}, ` +
-              `margin ${formatUsd(f.margin_usd)}${pnl}`,
-            color: PINK,
-          });
           return;
         }
         // A short paper's reduction buys back (backend app/backtest/averaging.py).
@@ -346,10 +313,6 @@ function draw(api: IChartApi, chart: PaperChart): (data: PaperChart) => void {
     chart.supertrend.length > 0
       ? api.addSeries(LineSeries, { title: 'supertrend', lineWidth: 2, priceFormat, ...quiet })
       : null;
-
-  // An averaging hedge paper's backtest longs: each one's average entry at the
-  // moment, a green step path of its own (drawn in repaint).
-  const hedged = chart.kind === 'averaging_hedge';
 
   const markerApi = createSeriesMarkers(candles, []);
   let attached: ISeriesPrimitive<Time>[] = [];
@@ -464,26 +427,7 @@ function draw(api: IChartApi, chart: PaperChart): (data: PaperChart) => void {
     // Backtest trades closed before the first candle: in the summary only.
     const shown = data.backtest.filter((t) => sec(t.closed_at) >= first);
     for (const t of shown) {
-      if (hedged) {
-        // Its average entry: each long fill's state, held to the next fill
-        // (a step) and to the close - a path per position, never joining the next.
-        const points: Point[] = [];
-        let held: number | null = null;
-        for (const f of t.fills.filter((x) => !isShortFill(x))) {
-          const time = onCandle(f.time) as UTCTimestamp;
-          if (held !== null) {
-            points.push({ time, price: held });
-          }
-          points.push({ time, price: f.avg_entry });
-          held = f.avg_entry;
-        }
-        if (held !== null) {
-          points.push({ time: onCandle(t.closed_at) as UTCTimestamp, price: held });
-          attach(new Path(points, GREEN));
-        }
-      } else {
-        trade(t.opened_at, t.entry_price, onCandle(t.closed_at), Number(t.close_price), t.direction);
-      }
+      trade(t.opened_at, t.entry_price, onCandle(t.closed_at), Number(t.close_price), t.direction);
       // A liquidated or given-up averaging position: a red dashed line across the chart.
       if (FORCED_EXITS.includes(t.exit_reason)) {
         attach(new VerticalLine(onCandle(t.closed_at) as UTCTimestamp, RED));
@@ -557,17 +501,6 @@ function draw(api: IChartApi, chart: PaperChart): (data: PaperChart) => void {
       t.fills.forEach((f, k) => {
         // Before the loaded candles: skipped, not stacked on the first one.
         if (sec(f.time) < first) {
-          return;
-        }
-        if (isShortFill(f)) {
-          // A hedge short's fill: a pink dot above the candle (its price is the hedge asset's).
-          markers.push({
-            time: onCandle(f.time) as UTCTimestamp,
-            position: 'aboveBar',
-            shape: 'circle',
-            color: PINK,
-            size: 0.5,
-          });
           return;
         }
         if (f.side === 'sell') {

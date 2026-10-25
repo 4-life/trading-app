@@ -8,11 +8,9 @@ export const EXECUTORS: Record<string, readonly string[]> = {
   regime: ['long', 'short', 'both'],
 };
 // An averaging paper's directions, whatever its executor (the API's
-// AVERAGING_DIRECTIONS) - both only where the executor trades both; a hedge
-// one is long only.
+// AVERAGING_DIRECTIONS) - both only where the executor trades both.
 export const AVERAGING_DIRECTIONS: Record<string, readonly string[]> = {
   averaging: ['long', 'short', 'both'],
-  averaging_hedge: ['long'],
 };
 
 export function averagingDirections(kind: string, executor: string): string[] {
