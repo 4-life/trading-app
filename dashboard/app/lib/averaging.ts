@@ -8,8 +8,10 @@ const MAINTENANCE = 0.2;
 const MAX_ADDS = 100_000;
 
 export interface GiveUp {
-  drop: number; // from the first buy, a fraction: where it closes (out_of_margin)
-  liquidation: number; // the drop the exchange would liquidate at, just past it
+  // The move against the first entry, a fraction (a long's drop, a short's
+  // rise): where it closes (out_of_margin).
+  drop: number;
+  liquidation: number; // the move the exchange would liquidate at, just past it
   adds: number; // dip adds before the max margin stops them
   margin: number; // locked by then
 }
@@ -31,7 +33,7 @@ function levels(margin: number, cost: number, maintenance: number | null): [numb
 // the add level, until the next would pass `maxMargin`; then the give-up at
 // its level (both from levels(), with the asset's `maintenance` margin, null:
 // not known). Null without a max margin (adds until the cash runs out) or
-// with a setting missing.
+// with a setting missing. `short`: a short paper's - mirrored, the price rising.
 export function giveUp(
   leverage: number,
   initial: number,
@@ -39,6 +41,7 @@ export function giveUp(
   addLeverage: number,
   maxMargin: number,
   maintenance: number | null = null,
+  short = false,
 ): GiveUp | null {
   const settings = [leverage, initial, addSize, addLeverage, maxMargin];
   if (!settings.every((x) => x > 0)) {
@@ -48,7 +51,10 @@ export function giveUp(
   let cost = size;
   let margin = initial;
   let adds = 0;
-  const at = (left: number) => (cost - margin * (1 - left)) / size;
+  const sign = short ? -1 : 1;
+  const at = (left: number) => (cost - sign * margin * (1 - left)) / size;
+  // How far against the first entry `price` is - a long can't drop past 100%.
+  const against = (price: number) => (short ? price - 1 : Math.min(1 - price, 1));
   while (margin + addSize <= maxMargin && adds < MAX_ADDS) {
     const level = at(levels(margin, cost, maintenance)[0]);
     if (level <= 0) {
@@ -61,10 +67,12 @@ export function giveUp(
   }
   // The exchange's liquidation: the equity down to its maintenance x the notional.
   const liquidation =
-    maintenance === null ? at(MAINTENANCE) : (cost - margin) / (size * (1 - maintenance));
+    maintenance === null
+      ? at(MAINTENANCE)
+      : (cost - sign * margin) / (size * (1 - sign * maintenance));
   return {
-    drop: Math.min(1 - at(levels(margin, cost, maintenance)[1]), 1),
-    liquidation: Math.min(1 - liquidation, 1),
+    drop: against(at(levels(margin, cost, maintenance)[1])),
+    liquidation: against(liquidation),
     adds,
     margin,
   };

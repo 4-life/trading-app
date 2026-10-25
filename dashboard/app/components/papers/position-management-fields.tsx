@@ -10,20 +10,22 @@ import { DateField } from "./date-field";
 
 const asPercent = (share: number) => `${(share * 100).toFixed(1)}%`;
 
-// Where the automatic give-up lands with these settings, and the optional max drawdown's place.
-function describe(result: GiveUp | null, maxDrawdown: number): string {
+// Where the automatic give-up lands with these settings, and the optional max
+// drawdown's place - a short's above the first entry (+).
+function describe(result: GiveUp | null, maxDrawdown: number, short: boolean): string {
   if (result === null) {
     return "Give-up: set the max margin to see where it lands (without one, adds go on until the cash runs out).";
   }
+  const against = short ? "+" : "−";
   const line =
-    `Gives up at −${asPercent(result.drop)} from the first buy, after ${String(result.adds)} dip adds ` +
-    `($${result.margin.toFixed(0)} margin) - before the liquidation at −${asPercent(result.liquidation)}.`;
+    `Gives up at ${against}${asPercent(result.drop)} from the first entry, after ${String(result.adds)} dip adds ` +
+    `($${result.margin.toFixed(0)} margin) - before the liquidation at ${against}${asPercent(result.liquidation)}.`;
   if (maxDrawdown <= 0) {
     return line;
   }
   return maxDrawdown < result.drop
-    ? `${line} Max drawdown −${asPercent(maxDrawdown)} comes first.`
-    : `${line} Max drawdown −${asPercent(maxDrawdown)} is past it: never reached.`;
+    ? `${line} Max drawdown ${against}${asPercent(maxDrawdown)} comes first.`
+    : `${line} Max drawdown ${against}${asPercent(maxDrawdown)} is past it: never reached.`;
 }
 
 // An averaging paper's position management inputs (docs/papers.md#averaging-papers).
@@ -42,6 +44,8 @@ export function PositionManagementFields({ paper }: { paper?: Paper }) {
       const data = new FormData(form);
       const value = (name: string) => Number(data.get(name) ?? 0) || 0;
       const initial = value("initial_size_usd");
+      // The create form's direction select, else the paper's.
+      const short = (data.get("direction") ?? paper?.direction) === "short";
       const result = giveUp(
         value("leverage"),
         initial,
@@ -49,8 +53,9 @@ export function PositionManagementFields({ paper }: { paper?: Paper }) {
         value("add_leverage"),
         value("max_margin_usd"),
         paper?.maintenance_margin ? Number(paper.maintenance_margin) : null,
+        short,
       );
-      setFloor(describe(result, value("max_drawdown_pct") / 100));
+      setFloor(describe(result, value("max_drawdown_pct") / 100, short));
     };
     update();
     form.addEventListener("input", update);

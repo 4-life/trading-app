@@ -401,7 +401,7 @@ def reopens(paper: Paper) -> bool:
 
 
 async def _in_trend(paper: Paper, candle: datetime) -> bool:
-    """The strategy's own long trade still open at the close of `candle` (the
+    """The strategy's own trade (the paper's direction) still open at the close of `candle` (the
     latest closed one) - the paper's backtest replayed over its stored
     candles, as the averaging backtest decides it (app/backtest/averaging.py
     in_trend). Once per candle: the replay is heavy."""
@@ -418,7 +418,7 @@ async def _in_trend(paper: Paper, candle: datetime) -> bool:
         trades_of is not None
         and bool(bars)
         and bars[-1].time == candle
-        and candle in in_trend(bars, trades_of(paper, bars, None))
+        and candle in in_trend(bars, trades_of(paper, bars, None), paper.direction)
     )
     _trend_checked[paper.id] = (candle, held)
     return held
@@ -427,7 +427,7 @@ async def _in_trend(paper: Paper, candle: datetime) -> bool:
 async def _reopen_in_trend(paper: Paper) -> Signal | None:
     """A flat reopening paper (reopens): its last position closed at its
     intraday take-profit during the latest closed candle and the strategy's
-    trend lasts at that candle's close - a fresh long there; else None. Not
+    trend lasts at that candle's close - a fresh position there; else None. Not
     caught up later: the candle after missed (or rejected), no reopen."""
     async with async_session() as session:
         opens = (
@@ -451,11 +451,12 @@ async def _reopen_in_trend(paper: Paper) -> Signal | None:
     if len(opens) < 2 or last is None or last.closed_at is None:
         return None
     forming, candle = opens
-    if last.direction != "long" or last.exit_reason != TAKE_PROFIT_EXIT:
+    if last.direction != paper.direction or last.exit_reason != TAKE_PROFIT_EXIT:
         return None
     if not candle <= last.closed_at < forming or not await _in_trend(paper, candle):
         return None
-    return Signal("enter", "long", REOPEN_IN_TREND)
+    direction: Direction = "short" if paper.direction == "short" else "long"
+    return Signal("enter", direction, REOPEN_IN_TREND)
 
 
 async def _entry_allowed(executor: str, paper: Paper, direction: Direction) -> bool:

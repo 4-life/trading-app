@@ -59,9 +59,11 @@ function ManagementSummary({ paper }: { paper: Paper }) {
       Number(paper.add_leverage ?? 0),
       Number(paper.max_margin_usd ?? 0),
       paper.maintenance_margin === null ? null : Number(paper.maintenance_margin),
+      paper.direction === "short",
     );
     if (auto !== null) {
-      parts.push(`gives up at −${(auto.drop * 100).toFixed(1)}%`);
+      const against = paper.direction === "short" ? "+" : "−";
+      parts.push(`gives up at ${against}${(auto.drop * 100).toFixed(1)}%`);
     }
   }
   if (parts.length === 0) {

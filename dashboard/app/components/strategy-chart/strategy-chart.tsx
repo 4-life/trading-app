@@ -273,9 +273,11 @@ function tradesAt(chart: PaperChart, t: number): InfoRow[] {
           });
           return;
         }
+        // A short paper's reduction buys back (backend app/backtest/averaging.py).
+        const reduced = b.direction === 'short' ? 'bought back' : 'sold';
         const what =
           f.side === 'sell'
-            ? `sold a unit ${formatUsd(f.notional_usd)} at ${formatPrice(f.price)} ` +
+            ? `${reduced} a unit ${formatUsd(f.notional_usd)} at ${formatPrice(f.price)} ` +
               `(unit profit ${formatUsd(profits[k])}), -${formatUsd(f.margin_usd)} margin`
             : `${k === 0 ? 'entry' : 'add'} at ${formatPrice(f.price)} +${formatUsd(f.margin_usd)}`;
         rows.push({
@@ -569,12 +571,14 @@ function draw(api: IChartApi, chart: PaperChart): (data: PaperChart) => void {
           return;
         }
         if (f.side === 'sell') {
+          // A short paper's reduction: a buy back, under the candle.
+          const short = t.direction === 'short';
           markers.push({
             time: onCandle(f.time) as UTCTimestamp,
-            position: 'aboveBar',
-            shape: 'arrowDown',
+            position: short ? 'belowBar' : 'aboveBar',
+            shape: short ? 'arrowUp' : 'arrowDown',
             color: CYAN,
-            text: `sold $${Number(f.notional_usd).toFixed(0)}`,
+            text: `${short ? 'bought back' : 'sold'} $${Number(f.notional_usd).toFixed(0)}`,
           });
           return;
         }

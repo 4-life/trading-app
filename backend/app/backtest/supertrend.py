@@ -70,15 +70,17 @@ def simulate_paper(paper: Paper, bars: list[Bar], start: datetime | None = None)
 
 
 def entry_signals(paper: Paper, bars: list[Bar]) -> list[SimTrade]:
-    """Every candle the strategy signals a long on - an entry when flat, held
-    or not (an averaging paper's entries and signal adds)."""
-    if _direction(paper) != "long":
-        return []
-    st = signals([b.high for b in bars], [b.low for b in bars], [b.close for b in bars], "long")
+    """Every candle the strategy signals an entry on in the paper's direction
+    - an entry when flat, held or not (an averaging paper's entries and
+    signal adds)."""
+    direction = _direction(paper)
+    st = signals([b.high for b in bars], [b.low for b in bars], [b.close for b in bars], direction)
+    long = direction == "long"
+    opens, reason = (st.buy, SUPERTREND_BUY) if long else (st.sell, SUPERTREND_SELL)
     return [
-        SimTrade("long", bar.time, bar.close, None, entry_reason=SUPERTREND_BUY)
+        SimTrade(direction, bar.time, bar.close, None, entry_reason=reason)
         for i, bar in enumerate(bars)
-        if st.buy[i]
+        if opens[i]
     ]
 
 

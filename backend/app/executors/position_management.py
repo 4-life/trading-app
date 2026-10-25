@@ -182,8 +182,10 @@ def next_unwind(
     lot = _unwound(sign, lots)
     if lot is None:
         return None
-    above = [sign * p for p, _ in lots if sign * p > sign * lot[0]] + [sign * first_buy]
-    if sign * price < min(above) * (1 + buffer):
+    above = [p for p, _ in lots if sign * p > sign * lot[0]] + [first_buy]
+    # The next unit's level, plus the buffer in the position's favour.
+    level = min(above, key=lambda p: sign * p) * (1 + sign * buffer)
+    if sign * (price - level) < 0:
         return None
     return Signal("exit", direction, UNWIND_EXIT, close_fraction=min(lot[1] / size, Decimal(1)))
 

@@ -21,7 +21,7 @@ A paper is one strategy running on one asset. The owner creates papers from the 
 
 ## Averaging Papers
 
-A paper of kind `averaging` holds a **long** through the dips, adding to it, until its strategy sells above the take-profit, or the give-up. Meant for assets the owner expects to recover (an index like QQQ or SPY, or BTC) when they judge a bottom is near: the owner only switches the paper on (enable) and off (disable); its executor picks the entry point, and the paper manages the position from there. Its parameters are required (except `add_size_usd`); single and scanner papers have none and trade exactly as their executor does. Shares are fractions in the API (`0.3` = 30%) and percentages in the dashboard.
+A paper of kind `averaging` holds a **long** through the dips, adding to it, until its strategy sells above the take-profit, or the give-up. With `direction` **short** it's the same, mirrored: it opens on its strategy's short entries, adds as the price rises against it, unwinds and takes profit on the way down, closes on the strategy's short exits above the take-profit, and gives up above the first entry (the backtest's candles go up to their high first, then down; the chart's reductions read "bought back"). A hedge paper stays long only. Meant for assets the owner expects to recover (an index like QQQ or SPY, or BTC) when they judge a bottom is near: the owner only switches the paper on (enable) and off (disable); its executor picks the entry point, and the paper manages the position from there. Its parameters are required (except `add_size_usd`); single and scanner papers have none and trade exactly as their executor does. Shares are fractions in the API (`0.3` = 30%) and percentages in the dashboard.
 
 | Parameter | Example | Meaning |
 |---|---|---|
@@ -101,7 +101,7 @@ A **single** paper can set its own **stop-loss** (`stop_loss_pct`) and **take-pr
 ## Kinds
 
 - **`single`** — one strategy on one asset, as above. Every executor trades single papers only.
-- **`averaging`** — a **long-only** single paper that manages its own position: a fixed first size, automatic **averaging down**, a take-profit floor under its strategy's sell signals and a give-up — see [Averaging Papers](#averaging-papers). Its executor finds the entry; it's prepared (backfill, backtest), traded and charted like a single paper.
+- **`averaging`** — a **long or short** single paper that manages its own position: a fixed first size, automatic **averaging down**, a take-profit floor under its strategy's sell signals and a give-up — see [Averaging Papers](#averaging-papers). Its executor finds the entry; it's prepared (backfill, backtest), traded and charted like a single paper.
 - **`averaging_hedge`** — an averaging long fuelled by an ETH short, backtest and chart only — see [Averaging Hedge Papers](#averaging-hedge-papers).
 - **`scanner`** — a strategy that picks its coins itself across the market. It has no asset and never trades: it creates `single` papers (`parent_id` = the scanner) for the coins it finds, and those trade like any other paper — the executor, risk engine, execution engine and manual close don't know the difference. Executors that can scan: `trend`.
 

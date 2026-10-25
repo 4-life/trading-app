@@ -197,16 +197,19 @@ class PaperChartOut(BaseModel):
     backtest: list[BacktestTradeOut]
 
 
-def _fills_out(rows: list[BacktestFill], notional: float | None) -> list[BacktestFillOut]:
+def _fills_out(
+    rows: list[BacktestFill], notional: float | None, short: bool
+) -> list[BacktestFillOut]:
     """An averaging position's fills, each with the position's state after it
-    (`notional`: the exchange's maintenance margin, liquidating there)."""
+    (`notional`: the exchange's maintenance margin, liquidating there;
+    `short`: a short position's)."""
     if not rows:
         return []
     fills = [
         Fill(r.filled_at, float(r.price), float(r.margin_usd), float(r.notional_usd), r.side)
         for r in rows
     ]
-    states = states_after(fills, settings.maintenance_margin_pct, notional)
+    states = states_after(fills, settings.maintenance_margin_pct, notional, short)
     return [
         BacktestFillOut(
             time=r.filled_at,
@@ -597,7 +600,7 @@ async def paper_chart(
                 margin_usd=t.margin_usd,
                 pnl_usd=t.pnl_usd,
                 hedge_pnl_usd=t.hedge_pnl_usd,
-                fills=_fills_out(fills_of.get(t.id, []), maintenance),
+                fills=_fills_out(fills_of.get(t.id, []), maintenance, t.direction == "short"),
             )
             for t in backtest
         ],

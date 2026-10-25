@@ -56,6 +56,41 @@ def test_an_add_at_half_the_margin_lost_then_the_sell_above_the_take_profit() ->
     assert (t.exit_reason, t.close_price) == (f"{TAKE_PROFIT_EXIT}:hh_rejection", 130)
 
 
+def test_a_short_is_the_long_mirrored() -> None:
+    # $100 short at 100 ($10 margin): half of it is lost at 105; the strategy
+    # buys back at 70.
+    bars = _bars((100, 100, 100, 100), (100, 105.5, 100, 104), (104, 104, 69, 70))
+    short = replace(PLAN_F, short=True)
+    [t] = simulate(bars, [_entry(0, direction="short", sell_at=(2, 70))], short)
+    assert t.adds == 1
+    assert t.margin == 20
+    # The first sell, the add at its level - the highest unit, kept to the
+    # close - and the first sell bought back in profit on the way down (its
+    # price - 0.4%), before the strategy's exit.
+    assert [(f.side, f.time, f.price) for f in t.fills] == [
+        ("buy", T0, 100),
+        ("buy", T0 + timedelta(hours=1), 105),
+        ("sell", T0 + timedelta(hours=2), pytest.approx(99.6)),
+    ]
+    assert t.entry_price == pytest.approx(130 / (1 + 30 / 105))
+    assert (t.exit_reason, t.close_price) == (f"{TAKE_PROFIT_EXIT}:hh_rejection", 70)
+    assert t.pnl_usd > 0
+    # A long's entries open no short.
+    assert simulate(bars, [_entry(0, sell_at=(2, 70))], short) == []
+
+
+def test_a_short_gives_up_above_the_first_sell() -> None:
+    # No budget for an add: the automatic give-up once 70% of the $10 margin
+    # is lost - at 107, on the way up (before the 40% drawdown's 140).
+    bars = _bars((100, 100, 100, 100), (100, 150, 100, 145))
+    rules = replace(PLAN_F, short=True, max_margin=10)
+    [t] = simulate(bars, [_entry(0, direction="short")], rules)
+    assert t.exit_reason == OUT_OF_MARGIN_EXIT
+    assert t.close_price == pytest.approx(107)
+    assert t.give_up_price == pytest.approx(140)
+    assert t.pnl_usd == pytest.approx(-7)
+
+
 def test_a_sell_below_the_take_profit_is_ignored_the_position_holds() -> None:
     # $100 at 100 on $10 of margin: a sell at 102 is +$2 = 20% - under the 30% floor.
     bars = _bars((100, 100, 100, 100), (100, 103, 100, 102), (102, 102, 101, 101))

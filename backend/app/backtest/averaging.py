@@ -48,7 +48,14 @@ it needed) and the PnL net of fees, and `return_pct` = PnL / that margin /
 the paper's leverage - so the risk
 engine, which multiplies by the leverage, reads % of margin. Its buys (the
 first entry and every add) go to `backtest_fills`, for the chart.
-Fees: the selected provider's maker fee on every fill."""
+Fees: the selected provider's maker fee on every fill.
+
+A short paper (`direction` short) is the same, mirrored: the strategy's short
+entries open it and its short exits are the sell signals, each candle takes
+the price up to its high first (the adds, the give-up and the liquidation
+above the entry), then down (the unwinds and the take-profit); its "buys"
+are the sells that open or add to it - the fills' sides stay "buy" (adds)
+and "sell" (reductions)."""
 
 import logging
 import sys
@@ -128,6 +135,21 @@ class Rules:
     # The exchange's maintenance margin, a share of the notional
     # (app/market_data/limits.py): liquidated under it instead of `maintenance`.
     maintenance_notional: float | None = None
+    short: bool = False  # a short paper: everything mirrored (the module's doc)
+
+    @property
+    def sign(self) -> int:
+        return -1 if self.short else 1
+
+
+def _worse(sign: int, a: float, b: float) -> float:
+    """The price further against the position: a long's lower, a short's higher."""
+    return min(a, b, key=lambda x: sign * x)
+
+
+def _better(sign: int, a: float, b: float) -> float:
+    """The price further in the position's favour: a long's higher, a short's lower."""
+    return max(a, b, key=lambda x: sign * x)
 
 
 @dataclass
@@ -135,6 +157,7 @@ class Position:
     opened_at: datetime
     entry_reason: str
     first_buy: float
+    sign: int = 1  # 1 a long, -1 a short (Rules.sign)
     # The most it may lock at once: Rules.max_margin, less past losses - never
     # more (profits are banked, not put back in) unless the rules compound.
     budget: float | None = None
@@ -162,8 +185,9 @@ class Position:
     def _next_sale(self) -> list[tuple[float, float]]:
         """The units the next sale sells - never the lowest, kept to the close:
         with PAIR_FROM_DIPS dip units or more held, the two cheapest others
-        together; else the cheapest other alone. Empty with fewer than two units."""
-        sellable = sorted(self.lots)[1:]
+        together; else the cheapest other alone. Empty with fewer than two units.
+        (A short: mirrored - the highest kept, the next-highest sold.)"""
+        sellable = sorted(self.lots, key=lambda lot: self.sign * lot[0])[1:]
         dips = len(self.lots) - (self.first_lot in self.lots)
         return sellable[:2] if dips >= PAIR_FROM_DIPS and len(sellable) >= 2 else sellable[:1]
 
@@ -174,7 +198,9 @@ class Position:
         sell. (The live grid sells one unit at the next-higher unit's price
         instead - backtest only.)"""
         units = self._next_sale()
-        return max(p for p, _ in units) * (1 + buffer) if units else None
+        if not units:
+            return None
+        return max((p for p, _ in units), key=lambda p: self.sign * p) * (1 + self.sign * buffer)
 
     def unwind(self, time: datetime, price: float, fee_rate: float) -> None:
         """Sells the next sale's units at `price`, one fill (a pair at once)."""
@@ -187,18 +213,23 @@ class Position:
 
     def next_signal_sale(self, buffer: float) -> float | None:
         """The price the lowest signal unit is sold at: its buy price plus
-        `buffer` - its fees and slippage; None without one."""
-        return min(self.signal_lots)[0] * (1 + buffer) if self.signal_lots else None
+        `buffer` - its fees and slippage; None without one. (A short: the highest.)"""
+        if not self.signal_lots:
+            return None
+        return self._best_signal_lot()[0] * (1 + self.sign * buffer)
+
+    def _best_signal_lot(self) -> tuple[float, float]:
+        return min(self.signal_lots, key=lambda lot: self.sign * lot[0])
 
     def sell_signal_unit(self, time: datetime, price: float, fee_rate: float) -> None:
         """Sells the lowest signal unit at `price`."""
-        lot = min(self.signal_lots)
+        lot = self._best_signal_lot()
         self.signal_lots.remove(lot)
         self.sell(time, price, lot[1] / self.size, fee_rate, lot[0])
 
     def pnl_at(self, price: float, fee_rate: float) -> float:
         """The whole PnL closed at `price`: the sells' + the size held's, after fees."""
-        held = self.size * (price - self.entry) - self.size * price * fee_rate
+        held = self.sign * self.size * (price - self.entry) - self.size * price * fee_rate
         return self.realized + held - self.fees
 
     def sell(
@@ -215,8 +246,8 @@ class Position:
         engine's partial close."""
         sold = self.size * fraction
         released = self.margin * fraction
-        self.realized += sold * (price - self.entry) - sold * price * fee_rate
-        profit = None if unit_price is None else sold * (price - unit_price)
+        self.realized += self.sign * sold * (price - self.entry) - sold * price * fee_rate
+        profit = None if unit_price is None else self.sign * sold * (price - unit_price)
         self.fills.append(Fill(time, price, released, sold * price, "sell", profit))
         self.size -= sold
         self.cost -= self.cost * fraction
@@ -236,7 +267,7 @@ class Position:
         unit of the grid whatever its price; so is the first buy and a signal
         add under it."""
         notional = margin * leverage
-        if not self.fills or dip or price < self.first_buy:
+        if not self.fills or dip or self.sign * (self.first_buy - price) > 0:
             self.lots.append((price, notional / price))
             if not self.fills:
                 self.first_lot = self.lots[-1]
@@ -251,7 +282,7 @@ class Position:
 
     def margin_left_at(self, share: float) -> float:
         """The price at which the margin left is down to `share` of it."""
-        return self.entry - self.margin * (1 - share) / self.size
+        return self.entry - self.sign * self.margin * (1 - share) / self.size
 
     def liquidation(self, maintenance: float, notional: float | None = None) -> float:
         """The price at which the exchange liquidates: the equity (margin
@@ -261,7 +292,9 @@ class Position:
         (app/execution_engine/demo.py)."""
         if notional is None:
             return self.margin_left_at(maintenance)
-        return (self.size * self.entry - self.margin) / (self.size * (1 - notional))
+        return (self.size * self.entry - self.sign * self.margin) / (
+            self.size * (1 - self.sign * notional)
+        )
 
 
 @dataclass(frozen=True)
@@ -276,12 +309,12 @@ class FillState:
 
 
 def states_after(
-    fills: list[Fill], maintenance: float, notional: float | None = None
+    fills: list[Fill], maintenance: float, notional: float | None = None, short: bool = False
 ) -> list[FillState]:
     """The position after each of its fills (the first entry, then the adds
     and unwinds); a hedge short's fill leaves it as it was. `maintenance` /
-    `notional`: Position.liquidation's."""
-    pos = Position(fills[0].time, "", fills[0].price)
+    `notional`: Position.liquidation's; `short`: a short paper's position."""
+    pos = Position(fills[0].time, "", fills[0].price, -1 if short else 1)
     out: list[FillState] = []
     for f in fills:
         if f.side in SHORT_SIDES:
@@ -297,7 +330,7 @@ def states_after(
                 pos.entry,
                 pos.cost / pos.margin,
                 pos.liquidation(maintenance, notional),
-                pos.size * (f.price - pos.entry),
+                pos.sign * pos.size * (f.price - pos.entry),
             )
         )
     return out
@@ -334,7 +367,7 @@ def _close(
     pos: Position, bar: Bar, price: float, reason: str, rules: Rules, fee_rate: float
 ) -> AveragingTrade:
     fees = pos.fees + pos.size * price * fee_rate
-    pnl = pos.size * (price - pos.entry) - fees + pos.realized
+    pnl = pos.sign * pos.size * (price - pos.entry) - fees + pos.realized
     if reason == LIQUIDATION_EXIT and rules.maintenance_notional is not None:
         # The exchange keeps what's left of the margin (to its insurance
         # fund): the whole margin is lost - its sells' PnL kept.
@@ -343,7 +376,7 @@ def _close(
         pos.opened_at,
         pos.entry_reason,
         pos.entry,
-        None if rules.max_drawdown is None else pos.first_buy * (1 - rules.max_drawdown),
+        None if rules.max_drawdown is None else _give_up_price(pos, rules.max_drawdown),
         tuple(pos.fills),
         pos.peak_margin,
         bar.time,
@@ -351,6 +384,11 @@ def _close(
         reason,
         pnl,
     )
+
+
+def _give_up_price(pos: Position, max_drawdown: float) -> float:
+    """max_drawdown's level: that far against the first buy."""
+    return pos.first_buy * (1 - pos.sign * max_drawdown)
 
 
 def _can_add(pos: Position, margin: float) -> bool:
@@ -366,7 +404,10 @@ def _down_to_low(pos: Position, bar: Bar, rules: Rules, fee_rate: float) -> Aver
     the budget no add comes - the dip runs on to a give-up: the automatic
     one (OUT_OF_MARGIN_EXIT) comes before the execution engine's liquidation,
     which only a gap past both reaches - at the open, the give-up's fill. The
-    exchange's (`maintenance_notional`) can come first at a high leverage."""
+    exchange's (`maintenance_notional`) can come first at a high leverage.
+    A short's: the way up to its high, lowest price first."""
+    sign = pos.sign
+    adverse = bar.low if sign == 1 else bar.high
     while True:
         # Where the exchange's maintenance margin liquidates early, the add and
         # the give-up move up with it (margin_levels) - the add before it.
@@ -376,14 +417,15 @@ def _down_to_low(pos: Position, bar: Bar, rules: Rules, fee_rate: float) -> Aver
             (pos.liquidation(rules.maintenance, rules.maintenance_notional), 1, LIQUIDATION_EXIT),
         ]
         if rules.max_drawdown is not None:
-            events.append((pos.first_buy * (1 - rules.max_drawdown), 3, MAX_DRAWDOWN_EXIT))
+            events.append((_give_up_price(pos, rules.max_drawdown), 3, MAX_DRAWDOWN_EXIT))
         if _can_add(pos, rules.add_size):
             events.append((pos.margin_left_at(add_at), 0, ""))
-        reached = [e for e in events if e[0] >= bar.low]
+        reached = [e for e in events if sign * (e[0] - adverse) >= 0]
         if not reached:
             return None
-        level, _, reason = max(reached)
-        fill = min(level, bar.open)
+        # The first reached on the way (an exit before an add at the same price).
+        level, _, reason = max(reached, key=lambda e: (sign * e[0], e[1]))
+        fill = _worse(sign, level, bar.open)
         if reason:
             return _close(pos, bar, fill, reason, rules, fee_rate)
         pos.buy(bar.time, fill, rules.add_size, rules.add_leverage, fee_rate, dip=True)
@@ -417,13 +459,14 @@ def _shorts(hedge: Hedge | None, pos: Position, time: datetime) -> tuple[float, 
     return pos.hedge_realized + held, hedge.margin
 
 
-def in_trend(bars: list[Bar], trades: Sequence[SimTrade]) -> set[datetime]:
-    """The candles the strategy's own long trade is still open at the close of
-    - opened on it or before, sold after it (or never): its trend lasts."""
+def in_trend(bars: list[Bar], trades: Sequence[SimTrade], direction: str = "long") -> set[datetime]:
+    """The candles the strategy's own trade in `direction` is still open at
+    the close of - opened on it or before, sold after it (or never): its
+    trend lasts."""
     times = [b.time for b in bars]
     held: set[datetime] = set()
     for t in trades:
-        if t.direction != "long":
+        if t.direction != direction:
             continue
         sold = None if t.exit_reason == OPEN_AT_END else t.closed_at
         end = len(times) if sold is None else bisect_left(times, sold)
@@ -453,18 +496,20 @@ def simulate(
     no short open and its total (the long's + its shorts' PnL) in profit, it
     closes at that close (SEASON_END_EXIT) and a new one opens there
     (SEASON_REOPEN) - the budget allowing."""
+    direction = "short" if rules.short else "long"
+    sign = rules.sign
     signals: dict[datetime, SimTrade] = {}
     sells: dict[datetime, SimTrade] = {}
     for t in signals_held:
-        if t.direction == "long":
+        if t.direction == direction:
             signals.setdefault(t.opened_at, t)
     for t in entries:
-        if t.direction == "long":
+        if t.direction == direction:
             signals.setdefault(t.opened_at, t)
             if t.closed_at is not None and t.exit_reason != OPEN_AT_END:
                 sells.setdefault(t.closed_at, t)
     # Reopening after an intraday take-profit: where the strategy's trend lasts.
-    trend = in_trend(bars, entries) if rules.intraday and rules.reopen else set()
+    trend = in_trend(bars, entries, direction) if rules.intraday and rules.reopen else set()
     trades: list[AveragingTrade] = []
     pos: Position | None = None
     budget = rules.max_margin  # the cash: grows with every win, shrinks with every loss
@@ -479,7 +524,7 @@ def simulate(
     def open_at(time: datetime, reason: str, price: float) -> Position:
         """A new position on the cash; compounding, its hedge's thresholds
         (the share of the max margin) are on its budget instead."""
-        opened = Position(time, reason, price, cap(budget))
+        opened = Position(time, reason, price, sign, cap(budget))
         if hedge is not None and rules.compound:
             hedge.max_margin = opened.budget
         return opened
@@ -487,6 +532,7 @@ def simulate(
     bearish_before = False  # the trend bands closed bearish on the previous candle (a hedge's)
     for bar in bars:
         signal = signals.get(bar.time)
+        favourable = bar.high if sign == 1 else bar.low  # a short's way down
         if pos is not None:
             buys = len(pos.fills)
             closed = _down_to_low(pos, bar, rules, fee_rate)
@@ -496,12 +542,12 @@ def simulate(
             unwinds = closed is None and not added
             buffer = float(unwind_buffer(Decimal(str(fee_rate))))
             level = pos.next_unwind(buffer) if unwinds else None
-            while level is not None and bar.high >= level:
-                pos.unwind(bar.time, max(level, bar.open), fee_rate)
+            while level is not None and sign * (favourable - level) >= 0:
+                pos.unwind(bar.time, _better(sign, level, bar.open), fee_rate)
                 level = pos.next_unwind(buffer)
             sale = pos.next_signal_sale(buffer) if unwinds and bearish_before else None
-            while sale is not None and bar.high >= sale:
-                price = max(sale, bar.open)
+            while sale is not None and sign * (favourable - sale) >= 0:
+                price = _better(sign, sale, bar.open)
                 if pos.pnl_at(price, fee_rate) >= 0:
                     break
                 pos.sell_signal_unit(bar.time, price, fee_rate)
@@ -515,13 +561,13 @@ def simulate(
                 # The take-profit at once: the price where the whole position's PnL
                 # reaches it - not in a candle that added units, as the unwinds.
                 gain = rules.take_profit * margin - pos.realized - shorts_pnl
-                target = pos.entry + gain / pos.size
-                if closed is None and not added and bar.high >= target:
-                    fill = max(target, bar.open)
+                target = pos.entry + sign * gain / pos.size
+                if closed is None and not added and sign * (favourable - target) >= 0:
+                    fill = _better(sign, target, bar.open)
                     closed = _close(pos, bar, fill, TAKE_PROFIT_EXIT, rules, fee_rate)
             elif closed is None and sell is not None and sell.close_price is not None:
                 # The whole position: its unwinds' realized PnL + the size held (as live).
-                pnl = pos.realized + pos.size * (sell.close_price - pos.entry) + shorts_pnl
+                pnl = pos.realized + sign * pos.size * (sell.close_price - pos.entry) + shorts_pnl
                 if pnl >= rules.take_profit * margin:
                     reason = f"{TAKE_PROFIT_EXIT}:{sell.exit_reason}"
                     closed = _close(pos, bar, sell.close_price, reason, rules, fee_rate)
@@ -624,6 +670,7 @@ def rules_of(paper: Paper, limits: Limits | None = None) -> Rules:
         reopen=bool(paper.reopen_in_trend),
         compound=bool(paper.compound_margin),
         maintenance_notional=None if limits is None else limits.maintenance_margin,
+        short=paper.direction == "short",
     )
 
 
@@ -662,7 +709,7 @@ async def backtest_paper(paper: Paper, start: datetime | None) -> list[Averaging
         for t in trades:
             row = BacktestTrade(
                 paper_id=paper.id,
-                direction="long",
+                direction=paper.direction,
                 opened_at=t.opened_at,
                 entry_price=Decimal(str(t.entry_price)),
                 stop_loss_price=None if t.give_up_price is None else Decimal(str(t.give_up_price)),

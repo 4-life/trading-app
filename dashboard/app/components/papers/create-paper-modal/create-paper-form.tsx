@@ -6,7 +6,7 @@ import { FIELD_CLASS } from "@/lib/styles";
 import { ASSET_KINDS, AVERAGING_KINDS } from "@/constants/papers";
 import type { ActionResult } from "@/types/action";
 
-import { EXECUTORS, SCANNER_EXECUTORS, TIMEFRAMES } from "../constants";
+import { AVERAGING_DIRECTIONS, EXECUTORS, SCANNER_EXECUTORS, TIMEFRAMES } from "../constants";
 import { PaperExitsFields } from "../paper-exits-fields";
 import { PositionManagementFields } from "../position-management-fields";
 import { Select } from "../select";
@@ -50,11 +50,13 @@ export function CreatePaperForm({
       />
       {ASSET_KINDS.includes(kind) && <Select name="asset" options={assets} required />}
       <Select name="timeframe" options={TIMEFRAMES} defaultValue="15m" />
-      {/* key: reset the choice when the allowed directions change; averaging is long only */}
+      {/* key: reset the choice when the allowed directions change */}
       <Select
         key={`${kind}-${executor}`}
         name="direction"
-        options={AVERAGING_KINDS.includes(kind) ? ["long"] : (EXECUTORS[executor] ?? [])}
+        options={
+          AVERAGING_KINDS.includes(kind) ? (AVERAGING_DIRECTIONS[kind] ?? []) : (EXECUTORS[executor] ?? [])
+        }
       />
       <input
         name="leverage"

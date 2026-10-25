@@ -56,6 +56,8 @@ from app.system.models import RiskEvent
 
 router = APIRouter()
 
+AVERAGING_DIRECTIONS = ("long", "short")
+
 Executor = Literal["trend", "vwap", "regime", "supertrend"]
 _EXECUTOR_DIRECTIONS: dict[str, tuple[str, ...]] = {
     "trend": ("long", "short", "both"),
@@ -286,12 +288,18 @@ async def create_paper(payload: PaperCreate) -> PaperOut:
     _check_exits(payload.kind, payload)
     if payload.kind != "scanner":
         await _check_leverage(payload.asset, payload.leverage, payload.add_leverage)
-    if payload.kind in AVERAGING_KINDS and payload.direction != "long":
-        raise HTTPException(status_code=422, detail="an averaging paper is long only")
+    if payload.kind == AVERAGING_HEDGE and payload.direction != "long":
+        raise HTTPException(status_code=422, detail="an averaging hedge paper is long only")
     if payload.kind == AVERAGING_HEDGE and payload.asset == HEDGE_ASSET:
         raise HTTPException(status_code=422, detail=f"the hedge is on {HEDGE_ASSET}: pick another")
-    if payload.direction not in _EXECUTOR_DIRECTIONS[payload.executor]:
-        allowed = ", ".join(_EXECUTOR_DIRECTIONS[payload.executor])
+    # An averaging paper: one direction - its strategy's entries in it, short too.
+    directions = (
+        AVERAGING_DIRECTIONS
+        if payload.kind == "averaging"
+        else _EXECUTOR_DIRECTIONS[payload.executor]
+    )
+    if payload.direction not in directions:
+        allowed = ", ".join(directions)
         raise HTTPException(
             status_code=422, detail=f"{payload.executor} supports direction: {allowed}"
         )

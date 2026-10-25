@@ -167,6 +167,18 @@ def test_the_lowest_unit_is_kept_the_next_sold_at_the_level_of_the_add_above_it(
     assert next_unwind("long", D(200), D(100), [], D(1), buffer) is None
 
 
+def test_a_shorts_unwind_is_mirrored_the_buffer_below_the_level() -> None:
+    lots = [(D(105), D("0.3")), (D(109), D("0.3")), (D(113), D("0.3"))]
+    buffer = unwind_buffer(D("0.0005"))
+    # 113 is kept to the close: 109 is bought back under 105 (- the buffer: 104.475).
+    assert next_unwind("short", D("104.5"), D(100), lots, D("1.9"), buffer) is None
+    sell = next_unwind("short", D("104.4"), D(100), lots, D("1.9"), buffer)
+    assert sell == Signal("exit", "short", UNWIND_EXIT, close_fraction=D("0.3") / D("1.9"))
+    # The lowest unit's level is the first sell's (- the buffer).
+    assert next_unwind("short", D("99.6"), D(100), lots[:2], D("1.6"), buffer) is None
+    assert next_unwind("short", D("99.5"), D(100), lots[:2], D("1.6"), buffer) is not None
+
+
 def test_max_margin_and_intraday_are_averaging_settings() -> None:
     _check_management("single", PositionManagement(intraday=False))
     with pytest.raises(HTTPException):

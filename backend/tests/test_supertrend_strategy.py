@@ -83,4 +83,6 @@ def test_an_averaging_paper_buys_on_every_buy_signal(monkeypatch: pytest.MonkeyP
     paper = Paper(direction="long")
     entries = backtest.entry_signals(paper, _bars([10, 11, 12, 13, 14, 15]))
     assert [t.entry_price for t in entries] == [11, 14]
-    assert backtest.entry_signals(Paper(direction="short"), _bars([10] * 6)) == []
+    # A short one: on every sell signal.
+    shorts = backtest.entry_signals(Paper(direction="short"), _bars([10, 11, 12, 13, 14, 15]))
+    assert [(t.direction, t.entry_price) for t in shorts] == [("short", 13)]

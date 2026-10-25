@@ -38,6 +38,8 @@ export function stateAt(
   let shortCost = 0;
   let shortMargin = 0;
   let shortRealized = 0;
+  // A short paper's position (its own fills, not a hedge's): the PnL mirrored.
+  const sign = t.direction === "short" ? -1 : 1;
   for (const f of t.fills) {
     if (new Date(f.time).getTime() / 1000 >= until) {
       break;
@@ -61,7 +63,7 @@ export function stateAt(
       }
     } else if (f.side === "sell") {
       const sold = notional / price;
-      realized += sold * (price - cost / size);
+      realized += sign * sold * (price - cost / size);
       cost -= cost * (sold / size);
       size -= sold;
       margin -= fillMargin;
@@ -76,7 +78,7 @@ export function stateAt(
   return {
     avgEntry,
     margin,
-    pnl: realized + size * (close - avgEntry),
+    pnl: realized + sign * size * (close - avgEntry),
     shortMargin: Math.max(shortMargin, 0),
     shortPnl: shortOpen === null ? null : shortRealized + shortOpen,
   };

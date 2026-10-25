@@ -28,6 +28,7 @@ from app.executors.base import direction_allowed
 from app.executors.vwap import reason
 from app.executors.vwap_signals import lines, signal_at
 from app.notifications.error_reporting import run_service
+from app.order_queue import Direction
 from app.papers.models import Paper
 
 logger = logging.getLogger(__name__)
@@ -73,10 +74,10 @@ def simulate_paper(paper: Paper, bars: list[Bar], start: datetime | None = None)
 
 
 def entry_signals(paper: Paper, bars: list[Bar]) -> list[SimTrade]:
-    """Every candle the strategy signals a long on - an entry when flat, held
-    or not (an averaging paper's entries and signal adds)."""
-    if not direction_allowed(paper.direction, "long"):
-        return []
+    """Every candle the strategy signals a long on (a short paper: a short) -
+    an entry when flat, held or not (an averaging paper's entries and signal
+    adds)."""
+    direction: Direction = "short" if paper.direction == "short" else "long"
     closes = [b.close for b in bars]
     ln = lines(
         [b.time for b in bars],
@@ -86,9 +87,9 @@ def entry_signals(paper: Paper, bars: list[Bar]) -> list[SimTrade]:
         [b.volume for b in bars],
     )
     return [
-        SimTrade("long", bar.time, bar.close, None, entry_reason=reason("long"))
+        SimTrade(direction, bar.time, bar.close, None, entry_reason=reason(direction))
         for i, bar in enumerate(bars)
-        if signal_at(closes, ln, i) == "long"
+        if signal_at(closes, ln, i) == direction
     ]
 
 
