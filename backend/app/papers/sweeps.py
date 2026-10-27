@@ -12,12 +12,13 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from sqlalchemy import ColumnElement, asc, delete, desc, select, update
+from sqlalchemy import ColumnElement, asc, delete, desc, func, select, update
 
 from app.backtest.exit_sweep import ExitSweepPlan, plan_exit_sweep, run_exit_sweep
 from app.backtest.models import ExitSweepRun, PaperSweep, SweepBatch, SweepRun
 from app.backtest.sweep import (
     PAPER_LEVERAGES,
+    SURVIVAL_MARGIN,
     SweepError,
     check_sweepable,
     plan_sweep,
@@ -137,6 +138,7 @@ def _run_row(sweep_id: int, r: dict[str, object]) -> SweepRun:
         most_margin_usd=num("all_most_cash_usd"),
         cash_drawdown_usd=num("all_cash_drawdown_usd"),
         drained_at=_date(r.get("drained_at")),
+        survivable_move_pct=None if r.get("survivable_move") is None else num("survivable_move"),
     )
 
 
@@ -209,6 +211,11 @@ async def _run(sweep_id: int, paper: Paper, max_leverage: float, max_margin: flo
                     split=plan.split.date(),
                     end=plan.end.date(),
                     runs_total=plan.runs,
+                    adverse_move_pct=(
+                        None
+                        if isinstance(plan, ExitSweepPlan) or plan.adverse_move is None
+                        else Decimal(str(round(plan.adverse_move, 6)))
+                    ),
                 )
             )
 
@@ -440,12 +447,15 @@ async def sweep_runs(
     compound: bool = False,
     max_margin: Decimal | None = None,
     robust_only: bool = False,
+    adverse_move: Decimal | None = None,
 ) -> list[SweepRun]:
     """The sweep's runs so far with compounding on / off, sorted by `sort`
     (SAFEST_TOTAL, MOST_WON_TOTAL: their own order, `order` aside) - the
     drained ones (stopped trading, out of cash) last, then the tight ones
     (under MIN_HEADROOM of the sweep's `max_margin` left, fixed budget
-    only); `robust_only`: neither."""
+    only), then the fragile ones (surviving under SURVIVAL_MARGIN x the
+    asset's `adverse_move`; older runs, not measured, aren't);
+    `robust_only`: none of them."""
     rankings: dict[str, list[ColumnElement[Any]]] = {
         SAFEST_TOTAL: [
             (SweepRun.give_ups + SweepRun.liquidations).asc(),
@@ -459,6 +469,9 @@ async def sweep_runs(
     # Compounding, a position's budget is the cash, past the max margin: no cap to measure.
     if max_margin is not None and not compound:
         fragile.append(SweepRun.most_margin_usd > max_margin * (1 - MIN_HEADROOM))
+    if adverse_move is not None:
+        survives = func.coalesce(SweepRun.survivable_move_pct, 1)
+        fragile.append(survives < adverse_move * Decimal(str(SURVIVAL_MARGIN)))
     query = select(SweepRun).where(SweepRun.sweep_id == sweep_id, SweepRun.compound == compound)
     if robust_only:
         query = query.where(*(~f for f in fragile))

@@ -7,7 +7,7 @@ import pytest
 
 from app.backtest.averaging import Rules, in_trend, simulate, states_after
 from app.backtest.bars import Bar, Fill, SimTrade
-from app.backtest.sweep import drained_at
+from app.backtest.sweep import adverse_move, drained_at, survivable_move
 from app.executors.position_management import (
     MAX_DRAWDOWN_EXIT,
     OUT_OF_MARGIN_EXIT,
@@ -428,3 +428,22 @@ def test_slippage_fills_every_fill_against_the_position() -> None:
     short = replace(PLAN_F, direction="short", slippage=0.001)
     [s] = simulate(bars, [_entry(0, direction="short")], short)
     assert s.fills[0].price == pytest.approx(99.9)
+
+
+def test_survivable_move_shrinks_with_less_room_to_add() -> None:
+    roomy = replace(PLAN_F, max_margin=1000)
+    tight = replace(PLAN_F, max_margin=10)  # no add: the give-up at 70% of the margin lost
+    assert survivable_move(tight) == pytest.approx(0.07)
+    assert survivable_move(roomy) > 3 * survivable_move(tight)
+    # A short mirrored: the same room; both - the smaller of the two.
+    assert survivable_move(replace(tight, direction="short")) == pytest.approx(0.07)
+    assert survivable_move(replace(tight, direction="both")) == pytest.approx(0.07)
+
+
+def test_adverse_move_is_the_percentile_of_the_worst_moves_against_the_entries() -> None:
+    bars = _bars(*[(100, 101, 100 - k, 100) for k in range(20)])
+    # Entered on candle 0: the lows after it reach 81 within the 7 days.
+    assert adverse_move(bars, [_entry(0)]) == pytest.approx(0.19)
+    # A short against the highs: 101 at most.
+    assert adverse_move(bars, [_entry(0, direction="short")]) == pytest.approx(0.01)
+    assert adverse_move(bars, []) is None

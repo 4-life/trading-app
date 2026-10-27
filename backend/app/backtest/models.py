@@ -77,6 +77,9 @@ class PaperSweep(Base):
     start: Mapped[date | None] = mapped_column(Date, nullable=True)
     split: Mapped[date | None] = mapped_column(Date, nullable=True)
     end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # An averaging sweep's: the asset's adverse move its runs must survive
+    # (app/backtest/sweep.py adverse_move), a share of the price; NULL: unknown.
+    adverse_move_pct: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
     runs_total: Mapped[int] = mapped_column(Integer, default=0)
     runs_done: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -135,6 +138,9 @@ class SweepRun(Base):
     # The cash fell under the initial size there - it stopped trading
     # (app/backtest/sweep.py drained_at); NULL: never.
     drained_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # How far the price can move against its first entry before it gives up,
+    # a share of the price (app/backtest/sweep.py survivable_move); NULL: older runs.
+    survivable_move_pct: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
 
 
 class ExitSweepRun(Base):

@@ -16,6 +16,11 @@ export interface PaperSweep {
   error: string | null;
   started_at: string;
   finished_at: string | null;
+  // An averaging sweep's: the asset's 95th-percentile move against the
+  // strategy's entries within 7 days (a share of the price; null: unknown) -
+  // a run must survive survival_margin x it.
+  adverse_move_pct: string | null;
+  survival_margin: number;
 }
 
 // One run of a sweep: its settings and stats (GET /papers/{id}/sweep/runs).
@@ -41,6 +46,8 @@ export interface SweepRun {
   cash_drawdown_usd: number;
   // The cash fell under the initial size (YYYY-MM-DD): it stopped trading; null: never.
   drained_at: string | null;
+  // How far the price can move against its first entry before it gives up; null: older runs.
+  survivable_move_pct: number | null;
 }
 
 // One run of a single paper's sweep (GET /papers/{id}/sweep/exit-runs): its

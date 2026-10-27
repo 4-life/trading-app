@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.backtest.averaging import backtest_paper as backtest_averaging
 from app.backtest.models import OPEN_AT_END, BacktestTrade, SweepBatch
-from app.backtest.sweep import SweepError
+from app.backtest.sweep import SURVIVAL_MARGIN, SweepError
 from app.db import async_session
 from app.execution_engine.live import live_client
 from app.execution_engine.models import (
@@ -382,6 +382,10 @@ class PaperSweepOut(BaseModel):
     error: str | None
     started_at: datetime
     finished_at: datetime | None
+    # An averaging sweep's: the asset's adverse move its runs must survive
+    # SURVIVAL_MARGIN x, a share of the price; null: unknown.
+    adverse_move_pct: Decimal | None = None
+    survival_margin: float = SURVIVAL_MARGIN
 
     model_config = {"from_attributes": True}
 
@@ -409,6 +413,8 @@ class SweepRunOut(BaseModel):
     most_margin_usd: float  # the most locked at once
     cash_drawdown_usd: float
     drained_at: date | None  # the cash fell under the initial size: it stopped trading
+    # How far the price can move against its first entry before it gives up; null: older runs.
+    survivable_move_pct: float | None = None
 
     model_config = {"from_attributes": True}
 
@@ -515,7 +521,16 @@ async def get_sweep_runs(
     sweep = await latest_sweep(paper_id)
     if sweep is None:
         raise HTTPException(status_code=404, detail="no sweep for this paper yet")
-    runs = await sweep_runs(sweep.id, sort, order, limit, compound, sweep.max_margin, robust_only)
+    runs = await sweep_runs(
+        sweep.id,
+        sort,
+        order,
+        limit,
+        compound,
+        sweep.max_margin,
+        robust_only,
+        sweep.adverse_move_pct,
+    )
     return [SweepRunOut.model_validate(r) for r in runs]
 
 

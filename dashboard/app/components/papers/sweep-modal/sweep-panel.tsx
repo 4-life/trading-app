@@ -42,6 +42,11 @@ export function SweepPanel({ paper }: { paper: Paper }) {
     stopped: stopFetcher.data,
   });
   const error = fetcher.data?.error ?? stopFetcher.data?.error ?? loadError;
+  // The move a run must survive (null: not measured).
+  const needed =
+    !sweep || sweep.adverse_move_pct === null
+      ? null
+      : Number(sweep.adverse_move_pct) * sweep.survival_margin;
   return (
     <div className="space-y-2 border-t pt-3">
       <fetcher.Form method="post" className="flex flex-wrap items-end gap-2">
@@ -134,10 +139,18 @@ export function SweepPanel({ paper }: { paper: Paper }) {
             {` · max ×${String(Math.floor(Number(sweep.max_leverage) * 10) / 10)}`}
             {sweep.max_margin === null ? "" : `, max margin ${formatUsd(sweep.max_margin)}`}
           </p>
+          {needed !== null && sweep.adverse_move_pct !== null && (
+            <p className="text-muted-foreground">
+              {`${paper.asset} moved up to ${(Number(sweep.adverse_move_pct) * 100).toFixed(1)}% ` +
+                `against 95% of the strategy's entries within 7 days - a run must survive ` +
+                `${String(sweep.survival_margin)}x that: ${(needed * 100).toFixed(1)}% (fragile under it)`}
+            </p>
+          )}
           {!single && (
             <label className="flex w-fit cursor-pointer items-center gap-1.5 text-muted-foreground">
               <Switch checked={robust} onCheckedChange={setRobust} />
-              Hide drained and tight runs (under {SWEEP_MIN_HEADROOM * 100}% of the max margin left)
+              Hide drained, tight (under {SWEEP_MIN_HEADROOM * 100}% of the max margin left) and fragile
+              runs
             </label>
           )}
           {runs.length === 0 && compoundRuns.length > 0 && (
@@ -164,9 +177,13 @@ export function SweepPanel({ paper }: { paper: Paper }) {
               ) : (
                 <>
                   <p className="font-medium">Fixed budget - profits banked</p>
-                  <AveragingRunsTable runs={runs as SweepRun[]} maxMargin={sweep.max_margin} />
+                  <AveragingRunsTable
+                    runs={runs as SweepRun[]}
+                    maxMargin={sweep.max_margin}
+                    needed={needed}
+                  />
                   <p className="pt-2 font-medium">Compounding - max margin + realized PnL</p>
-                  <AveragingRunsTable runs={compoundRuns} maxMargin={null} />
+                  <AveragingRunsTable runs={compoundRuns} maxMargin={null} needed={needed} />
                 </>
               )}
             </>

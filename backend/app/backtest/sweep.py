@@ -9,8 +9,10 @@ Rules.compound), trading over the same period as the paper's backtest -
 from its `backtest_start`, else its whole stored history, split at SPLIT:
 train before, test after (a position counts in the part it opened in);
 each run records when its cash fell under the initial size and it stopped
-trading (drained_at) - a chunk per leverage x initial size, spread over the
-worker processes - run at a low priority (WORKER_NICE): the API and the
+trading (drained_at) and how far the price can move against its first entry
+before it gives up (survivable_move), checked against the asset's own
+adverse moves (adverse_move) - a chunk per leverage x initial size, spread
+over the worker processes - run at a low priority (WORKER_NICE): the API and the
 executors come first. Nothing is saved but the runs' stats.
 
 Several papers' sweeps run one after another as a batch (app/papers/sweeps.py)."""
@@ -18,11 +20,12 @@ Several papers' sweeps run one after another as a batch (app/papers/sweeps.py)."
 import asyncio
 import logging
 import os
+from bisect import bisect_left
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from itertools import product
 
 from app.backtest.averaging import (
@@ -59,6 +62,12 @@ PAPER_MODES = ((False, False), (True, False), (True, True))
 
 SPLIT = 0.7  # the train share of the history
 WORKER_NICE = 10  # the sweep workers' CPU priority: below the API's and the executors'
+# The asset's adverse move a run must survive: the ADVERSE_PERCENTILE of the
+# worst moves against the strategy's entries within ADVERSE_HORIZON - a run
+# whose survivable move is under SURVIVAL_MARGIN x that is fragile.
+ADVERSE_HORIZON = timedelta(days=7)
+ADVERSE_PERCENTILE = 0.95
+SURVIVAL_MARGIN = 1.5
 
 
 def _part(trades: list[AveragingTrade], prefix: str) -> dict[str, float]:
@@ -116,6 +125,7 @@ def run_paper(job: PaperJob) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     end = job.bars[-1].time
     initial = job.initial_size
+    survives: float | None = None
     for take_profit, (intraday, reopen), compound in product(
         PAPER_TAKE_PROFITS, PAPER_MODES, (False, True)
     ):
@@ -132,6 +142,8 @@ def run_paper(job: PaperJob) -> list[dict[str, object]]:
         result = simulate(job.bars, job.trades, rules, job.fee_rate, job.start, job.signals)
         whole = _part(result, "all")
         drained = drained_at(result, rules)
+        if survives is None:  # the same for every take-profit, mode and compounding
+            survives = survivable_move(rules, job.fee_rate)
         rows.append(
             {
                 "paper": job.paper,
@@ -152,6 +164,7 @@ def run_paper(job: PaperJob) -> list[dict[str, object]]:
                 "to": end.date().isoformat(),
                 "total_usd": round(whole["all_pnl_usd"] + whole["all_open_unrealized_usd"], 2),
                 "drained_at": None if drained is None else drained.date().isoformat(),
+                "survivable_move": round(survives, 6),
                 **whole,
                 **_part([t for t in result if t.opened_at < job.split], "train"),
                 **_part([t for t in result if t.opened_at >= job.split], "test"),
@@ -174,6 +187,66 @@ def drained_at(trades: list[AveragingTrade], rules: Rules) -> datetime | None:
         if cash < rules.initial_size:
             return t.closed_at
     return None
+
+
+def survivable_move(rules: Rules, fee_rate: float = 0.0) -> float:
+    """How far the price can move against a first entry before the position
+    gives up (or is liquidated): `rules` replayed on one candle going
+    straight against it - every add it can fund on the way, its slippage and
+    the exchange's maintenance margin as in the backtest; a share of the
+    first fill. Both directions: the smaller."""
+    t0 = datetime(2000, 1, 1, tzinfo=UTC)
+    moves = []
+    for direction in rules.directions:
+        long = direction == "long"
+        far = 1.0 if long else 199.0  # 99% against
+        bars = [
+            Bar(t0, 100, 100, 100, 100),
+            Bar(t0 + timedelta(hours=1), 100, max(100, far), min(100, far), far),
+        ]
+        probe = SimTrade(direction, t0, 100.0, None, entry_reason="probe")
+        one = replace(rules, direction=direction, intraday=False, reopen=False)
+        [t] = simulate(bars, [probe], one, fee_rate)
+        first = t.fills[0].price
+        moves.append((first - t.close_price) / first if long else (t.close_price - first) / first)
+    return min(moves)
+
+
+def adverse_move(bars: list[Bar], entries: Sequence[SimTrade]) -> float | None:
+    """The asset's ADVERSE_PERCENTILE move against the strategy's `entries`:
+    each one's worst price over the ADVERSE_HORIZON after its candle, a share
+    of its entry price (0 if it never went against it). None without one."""
+    times = [b.time for b in bars]
+    moves = []
+    for e in entries:
+        after = bisect_left(times, e.opened_at) + 1
+        window = bars[after : bisect_left(times, e.opened_at + ADVERSE_HORIZON, lo=after) + 1]
+        if not window:
+            continue
+        if e.direction == "short":
+            move = max(b.high for b in window) / e.entry_price - 1
+        else:
+            move = 1 - min(b.low for b in window) / e.entry_price
+        moves.append(max(move, 0.0))
+    if not moves:
+        return None
+    moves.sort()
+    return moves[min(int(len(moves) * ADVERSE_PERCENTILE), len(moves) - 1)]
+
+
+def _inputs(
+    executor: str,
+    asset: str,
+    direction: str,
+    timeframe: str,
+    bars: list[Bar],
+    start: datetime | None,
+) -> tuple[list[SimTrade], list[SimTrade], float | None]:
+    """strategy_inputs and the asset's adverse_move against its entries from
+    `start` - in a worker process (plan_sweep)."""
+    trades, signals = strategy_inputs(executor, asset, direction, timeframe, bars, start)
+    entries = [e for e in (*trades, *signals) if start is None or e.opened_at >= start]
+    return trades, signals, adverse_move(bars, entries)
 
 
 class SweepError(Exception):
@@ -212,6 +285,7 @@ class SweepPlan:
     end: datetime
     leverages: list[float]
     jobs: list[PaperJob]
+    adverse_move: float | None  # the asset's (adverse_move), None without entries
 
     @property
     def runs(self) -> int:
@@ -241,9 +315,9 @@ async def plan_sweep(
     # runs this: its other requests mustn't wait.
     loop = asyncio.get_running_loop()
     with _pool(max_workers=1) as pool:
-        trades, signals = await loop.run_in_executor(
+        trades, signals, adverse = await loop.run_in_executor(
             pool,
-            strategy_inputs,
+            _inputs,
             paper.executor,
             paper.asset,
             paper.direction,
@@ -282,7 +356,7 @@ async def plan_sweep(
         )
         for leverage, initial in product(leverages, PAPER_INITIAL_SIZES)
     ]
-    plan = SweepPlan(start, split, end, leverages, jobs)
+    plan = SweepPlan(start, split, end, leverages, jobs, adverse)
     logger.info(
         "paper %d: leverages %s, add x%g, max $%s, %s -> %s: %d runs",
         paper.id,

@@ -9,8 +9,17 @@ const stillOpen = (r: SweepRun) => r.positions === 0 && r.open_unrealized_usd !=
 
 // An averaging paper's sweep runs (docs/papers.md#averaging-papers). `maxMargin`:
 // the sweep's, for each run's headroom - the max margin it left unused (none
-// compounding: its budget is the cash).
-export function AveragingRunsTable({ runs, maxMargin }: { runs: SweepRun[]; maxMargin: string | null }) {
+// compounding: its budget is the cash). `needed`: the move a run must survive
+// (the asset's adverse move x the margin; null: unknown).
+export function AveragingRunsTable({
+  runs,
+  maxMargin,
+  needed,
+}: {
+  runs: SweepRun[];
+  maxMargin: string | null;
+  needed: number | null;
+}) {
   const cap = maxMargin === null ? null : Number(maxMargin);
   return (
     <div className="overflow-x-auto">
@@ -27,6 +36,7 @@ export function AveragingRunsTable({ runs, maxMargin }: { runs: SweepRun[]; maxM
             <th>Give-ups</th>
             <th>Most margin</th>
             {cap !== null && <th>Headroom</th>}
+            <th>Survives</th>
             <th>Drained</th>
           </tr>
         </thead>
@@ -68,6 +78,7 @@ export function AveragingRunsTable({ runs, maxMargin }: { runs: SweepRun[]; maxM
               </td>
               <td>{formatUsd(String(r.most_margin_usd))}</td>
               {cap !== null && <Headroom used={r.most_margin_usd} cap={cap} />}
+              <Survives move={r.survivable_move_pct} needed={needed} />
               <td className={r.drained_at ? "text-red-500" : "text-muted-foreground"}>
                 {r.drained_at ?? "—"}
               </td>
@@ -84,6 +95,19 @@ function Headroom({ used, cap }: { used: number; cap: number }) {
   return (
     <td className={left < SWEEP_MIN_HEADROOM ? "text-red-500" : undefined}>
       {`${String(Math.round(left * 100))}%`}
+    </td>
+  );
+}
+
+// How far the price can move against the first entry before the run gives up;
+// red under the move it must survive.
+function Survives({ move, needed }: { move: number | null; needed: number | null }) {
+  if (move === null) {
+    return <td className="text-muted-foreground">—</td>;
+  }
+  return (
+    <td className={needed !== null && move < needed ? "text-red-500" : undefined}>
+      {`${(move * 100).toFixed(1)}%`}
     </td>
   );
 }
