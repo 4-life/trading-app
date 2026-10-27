@@ -12,7 +12,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from sqlalchemy import ColumnElement, asc, delete, desc, false, select, update
+from sqlalchemy import ColumnElement, asc, delete, desc, select, update
 
 from app.backtest.exit_sweep import ExitSweepPlan, plan_exit_sweep, run_exit_sweep
 from app.backtest.models import ExitSweepRun, PaperSweep, SweepBatch, SweepRun
@@ -455,18 +455,16 @@ async def sweep_runs(
     }
     ordering = rankings.get(sort) or [(desc if order == "desc" else asc)(getattr(SweepRun, sort))]
     drained = SweepRun.drained_at.is_not(None)
+    fragile: list[ColumnElement[bool]] = [drained]
     # Compounding, a position's budget is the cash, past the max margin: no cap to measure.
-    tight = (
-        false()
-        if max_margin is None or compound
-        else SweepRun.most_margin_usd > max_margin * (1 - MIN_HEADROOM)
-    )
+    if max_margin is not None and not compound:
+        fragile.append(SweepRun.most_margin_usd > max_margin * (1 - MIN_HEADROOM))
     query = select(SweepRun).where(SweepRun.sweep_id == sweep_id, SweepRun.compound == compound)
     if robust_only:
-        query = query.where(~drained, ~tight)
+        query = query.where(*(~f for f in fragile))
     async with async_session() as session:
         rows = await session.scalars(
-            query.order_by(drained.asc(), tight.asc(), *ordering, SweepRun.id).limit(limit)
+            query.order_by(*(f.asc() for f in fragile), *ordering, SweepRun.id).limit(limit)
         )
         return list(rows.all())
 
