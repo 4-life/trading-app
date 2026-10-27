@@ -1,62 +1,32 @@
-"""Temporary averaging parameter sweep (docs/papers.md#averaging-papers):
-which averaging settings perform best, per asset and strategy. Nothing is
-saved to the database but the candles - no papers, no backtest rows. Run
-on the local server (it takes a while):
-
-    python -m app.backtest.sweep <out.csv>
-
-For every asset in ASSETS: a 1h Regime paper (not intraday) and a 15m VWAP
-paper (intraday), long only, from the whole stored history. The
-candles are backfilled first (the missing ranges over BACKFILL_DAYS, as the
-backfill service does); the strategy's trades and signals are computed once
-per asset and timeframe, then every combination of LEVERAGES x
-ADD_LEVERAGES x TAKE_PROFITS replays them through the averaging backtest
-(app/backtest/averaging.py) with the FIXED settings - one process per
-asset and strategy.
-
-Each paper is backtested alone with its own $MAX_MARGIN budget (live, two
-papers can't hold one asset at once and the cash is shared - this is for
-comparing them only). The history is split at SPLIT: the settings are
-picked on the first part (train) and checked on the rest (test) - a
-position counts in the part it opened in.
-
-Writes one CSV row per run to <out.csv> and logs the
-top TOP per asset and strategy, then the settings that do best over all
-assets per strategy.
-
-The API's POST /papers/{id}/sweep (plan_sweep, run_sweep, stored by
-app/papers/sweeps.py): one averaging paper's settings instead - its executor,
-timeframe, add leverage, add size (default: the initial size), max
-drawdown and max margin fixed, every PAPER_LEVERAGES (up to the asset's max
-leverage) x PAPER_INITIAL_SIZES x PAPER_TAKE_PROFITS x PAPER_MODES (hold,
-intraday, intraday reopening in the trend) x compounding on / off (the
-budget growing with the realized PnL - Rules.compound),
-trading over the same period as the paper's backtest - from its
-`backtest_start`, else its whole stored history (split at SPLIT, as
-above); each run records when its cash fell under the initial size and it
-stopped trading (drained_at) - a chunk per leverage x initial size, spread over the worker
-processes - run at a low priority (WORKER_NICE): the API and the executors
-come first.
+"""An averaging paper's settings sweep (docs/papers.md#averaging-papers), the
+API's POST /papers/{id}/sweep (plan_sweep, run_sweep, stored by
+app/papers/sweeps.py): its executor, timeframe, add leverage, add size
+(default: the initial size), max drawdown and max margin fixed, every
+PAPER_LEVERAGES (up to the asset's max leverage) x PAPER_INITIAL_SIZES x
+PAPER_TAKE_PROFITS x PAPER_MODES (hold, intraday, intraday reopening in the
+trend) x compounding on / off (the budget growing with the realized PnL -
+Rules.compound), trading over the same period as the paper's backtest -
+from its `backtest_start`, else its whole stored history, split at SPLIT:
+train before, test after (a position counts in the part it opened in);
+each run records when its cash fell under the initial size and it stopped
+trading (drained_at) - a chunk per leverage x initial size, spread over the
+worker processes - run at a low priority (WORKER_NICE): the API and the
+executors come first. Nothing is saved but the runs' stats.
 
 Several papers' sweeps run one after another as a batch (app/papers/sweeps.py)."""
 
 import asyncio
-import csv
 import logging
 import os
-import sys
-import time
-from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from itertools import product
 
 from app.backtest.averaging import (
     ENTRY_SIGNALS,
-    FILL_SLIPPAGE,
     LIQUIDATION_EXIT,
     STRATEGY_TRADES,
     AveragingTrade,
@@ -66,34 +36,13 @@ from app.backtest.averaging import (
 )
 from app.backtest.bars import Bar, SimTrade, load_bars
 from app.backtest.models import OPEN_AT_END
-from app.config import settings
-from app.exchange.source import connected_adapter
 from app.executors.position_management import MAX_DRAWDOWN_EXIT, OUT_OF_MARGIN_EXIT
-from app.market_data.collector import backfill_candles
-from app.market_data.limits import Limits, market_limits
-from app.notifications.error_reporting import run_service
+from app.market_data.limits import market_limits
 from app.papers.models import Paper
 from app.system.exchange_api import maker_fee_rate
 
 logger = logging.getLogger(__name__)
 
-ASSETS = (
-    "BTC", "ETH", "SOL", "BNB", "HYPE", "QQQ", "ZEC",
-    "SOXL", "SNDK", "NVDA", "ENA", "XRP", "TRX", "SPY",
-)  # fmt: skip
-# (executor, timeframe, intraday)
-STRATEGIES = (("regime", "1h", False), ("vwap", "15m", True))
-
-LEVERAGES = (3, 5, 10, 20, 30, 50, 80, 100)
-ADD_LEVERAGES = (1, 2, 3, 5)
-TAKE_PROFITS = (0.01, 0.02, 0.05, 0.10, 0.20, 0.50)  # of the margin
-
-INITIAL_SIZE = 10.0
-ADD_SIZE = 20.0
-MAX_DRAWDOWN = None  # the automatic give-up only, before the liquidation
-MAX_MARGIN = 5000.0
-
-# One paper's sweep (`paper <id>`).
 PAPER_LEVERAGES = (3, 5, 10, 15, 20, 30, 50, 75, 100)  # those over the asset's max left out
 PAPER_INITIAL_SIZES = (
     10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 120.0, 150.0, 200.0, 250.0,
@@ -110,20 +59,6 @@ PAPER_MODES = ((False, False), (True, False), (True, True))
 
 SPLIT = 0.7  # the train share of the history
 WORKER_NICE = 10  # the sweep workers' CPU priority: below the API's and the executors'
-TOP = 5
-
-
-@dataclass(frozen=True)
-class Job:
-    asset: str
-    executor: str
-    timeframe: str
-    intraday: bool
-    bars: list[Bar]
-    trades: list[SimTrade]
-    signals: list[SimTrade]
-    fee_rate: float
-    limits: Limits | None  # the exchange's: leverages capped, its liquidation
 
 
 def _part(trades: list[AveragingTrade], prefix: str) -> dict[str, float]:
@@ -153,161 +88,6 @@ def _part(trades: list[AveragingTrade], prefix: str) -> dict[str, float]:
         f"{prefix}_open_unrealized_usd": round(sum(t.pnl_usd for t in open_), 2),
         f"{prefix}_open_margin_usd": round(sum(t.margin for t in open_), 2),
     }
-
-
-def run(job: Job) -> list[dict[str, object]]:
-    """Every combination of the settings over one asset and strategy."""
-    t0 = time.monotonic()
-    split = job.bars[0].time + (job.bars[-1].time - job.bars[0].time) * SPLIT
-    rows: list[dict[str, object]] = []
-    top = job.limits.max_leverage if job.limits else float("inf")
-    for wanted, wanted_add, take_profit in product(LEVERAGES, ADD_LEVERAGES, TAKE_PROFITS):
-        leverage, add_leverage = min(wanted, top), min(wanted_add, top)
-        rules = Rules(
-            leverage=leverage,
-            initial_size=INITIAL_SIZE,
-            add_leverage=add_leverage,
-            add_size=ADD_SIZE,
-            take_profit=take_profit,
-            max_drawdown=MAX_DRAWDOWN,
-            maintenance=settings.maintenance_margin_pct,
-            max_margin=MAX_MARGIN,
-            intraday=job.intraday,
-            maintenance_notional=job.limits.maintenance_margin if job.limits else None,
-            slippage=FILL_SLIPPAGE,
-        )
-        trades = simulate(job.bars, job.trades, rules, job.fee_rate, None, job.signals)
-        rows.append(
-            {
-                "asset": job.asset,
-                "executor": job.executor,
-                "timeframe": job.timeframe,
-                "intraday": job.intraday,
-                "leverage": leverage,
-                "add_leverage": add_leverage,
-                "take_profit_pct": take_profit,
-                "from": job.bars[0].time.date().isoformat(),
-                "split": split.date().isoformat(),
-                "to": job.bars[-1].time.date().isoformat(),
-                "candles": len(job.bars),
-                **_part(trades, "all"),
-                **_part([t for t in trades if t.opened_at < split], "train"),
-                **_part([t for t in trades if t.opened_at >= split], "test"),
-            }
-        )
-    logger.info(
-        "%s %s %s: %d runs over %d candles in %.0fs",
-        job.asset,
-        job.timeframe,
-        job.executor,
-        len(rows),
-        len(job.bars),
-        time.monotonic() - t0,
-    )
-    return rows
-
-
-async def _backfill() -> None:
-    """The missing candles of every asset and timeframe, over BACKFILL_DAYS."""
-    _, adapter = await connected_adapter()
-    end = datetime.now(UTC)
-    start = end - timedelta(days=settings.backfill_days)
-    start_ms, end_ms = int(start.timestamp() * 1000), int(end.timestamp() * 1000)
-    for asset in ASSETS:
-        if not adapter.is_listed(asset):
-            logger.warning("%s: not listed by the provider - skipped", asset)
-            continue
-        for _, timeframe, _ in STRATEGIES:
-            try:
-                await backfill_candles(adapter, asset, timeframe, start_ms, end_ms)
-            except Exception:
-                logger.exception("%s %s: backfill failed - skipped", asset, timeframe)
-
-
-async def _jobs() -> list[Job]:
-    fee_rate = float(await maker_fee_rate())
-    jobs: list[Job] = []
-    for asset, (executor, timeframe, intraday) in product(ASSETS, STRATEGIES):
-        paper = Paper(asset=asset, timeframe=timeframe, executor=executor, direction="long")
-        bars = await load_bars(paper)
-        if len(bars) < 2:
-            logger.warning("%s %s: no candles - skipped", asset, timeframe)
-            continue
-        trades = STRATEGY_TRADES[executor](paper, bars, None)
-        signals = ENTRY_SIGNALS[executor](paper, bars)
-        limits = await market_limits(asset)
-        jobs.append(
-            Job(asset, executor, timeframe, intraday, bars, trades, signals, fee_rate, limits)
-        )
-    return jobs
-
-
-def _settings(row: dict[str, object]) -> str:
-    return f"x{row['leverage']} add x{row['add_leverage']} TP {row['take_profit_pct']:.0%}"
-
-
-def _summary(rows: list[dict[str, object]]) -> None:
-    """The best TOP per asset and strategy - picked on train (positive, no
-    liquidation), ranked by test PnL - and per strategy, the settings with
-    the most test PnL summed over every asset."""
-
-    def num(row: dict[str, object], key: str) -> float:
-        value = row[key]
-        assert isinstance(value, int | float)
-        return float(value)
-
-    by_paper: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
-    for row in rows:
-        by_paper[(str(row["asset"]), str(row["executor"]))].append(row)
-    for (asset, executor), runs in sorted(by_paper.items()):
-        kept = [
-            r for r in runs if num(r, "train_pnl_usd") > 0 and num(r, "train_liquidations") == 0
-        ]
-        kept.sort(key=lambda r: num(r, "test_pnl_usd"), reverse=True)
-        logger.info("%s %s: %d of %d settings pass train", asset, executor, len(kept), len(runs))
-        for r in kept[:TOP]:
-            logger.info(
-                "  %-24s train %+9.2f  test %+9.2f  all %+9.2f USD, most cash %8.2f, "
-                "liquidations %d, give-ups %d, cash drawdown %+.2f",
-                _settings(r),
-                num(r, "train_pnl_usd"),
-                num(r, "test_pnl_usd"),
-                num(r, "all_pnl_usd"),
-                num(r, "all_most_cash_usd"),
-                int(num(r, "all_liquidations")),
-                int(num(r, "all_give_ups")),
-                num(r, "all_cash_drawdown_usd"),
-            )
-    for executor, _, _ in STRATEGIES:
-        totals: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0])
-        for r in rows:
-            if r["executor"] != executor:
-                continue
-            t = totals[_settings(r)]
-            t[0] += num(r, "test_pnl_usd")
-            t[1] += num(r, "all_pnl_usd")
-            t[2] += num(r, "test_pnl_usd") > 0
-            t[3] += num(r, "all_liquidations")
-        best = sorted(totals.items(), key=lambda kv: kv[1][0], reverse=True)[:TOP]
-        logger.info("%s over all assets (by test PnL):", executor)
-        for name, (test, all_, positive, liquidations) in best:
-            logger.info(
-                "  %-24s test %+10.2f  all %+10.2f USD, test positive on %d assets, "
-                "%d liquidations",
-                name,
-                test,
-                all_,
-                int(positive),
-                int(liquidations),
-            )
-
-
-def _write(rows: list[dict[str, object]], out: str) -> None:
-    with open(out, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
-    logger.info("%d runs written to %s", len(rows), out)
 
 
 @dataclass(frozen=True)
@@ -549,27 +329,3 @@ async def run_sweep(
 ) -> None:
     """An averaging paper's sweep: run_jobs over its chunks."""
     await run_jobs(plan.jobs, run_paper, on_rows)
-
-
-async def main() -> None:
-    if len(sys.argv) != 2:
-        logger.warning("usage: python -m app.backtest.sweep <out.csv>")
-        return
-    out = sys.argv[1]
-    await _backfill()
-    jobs = await _jobs()
-    runs = len(LEVERAGES) * len(ADD_LEVERAGES) * len(TAKE_PROFITS)
-    logger.info("%d papers x %d settings: %d runs", len(jobs), runs, len(jobs) * runs)
-    rows: list[dict[str, object]] = []
-    with ProcessPoolExecutor() as pool:
-        for result in pool.map(run, jobs):
-            rows.extend(result)
-    if not rows:
-        logger.info("no candles - nothing to sweep")
-        return
-    _write(rows, out)
-    _summary(rows)
-
-
-if __name__ == "__main__":
-    run_service("backtest", main)
