@@ -20,7 +20,6 @@ import type { Paper } from '@/types/paper';
 
 import { PaperExitsFields } from '../paper-exits-fields';
 import { PositionManagementFields } from '../position-management-fields';
-import { SweepPanel } from './sweep-panel';
 
 // Edits the leverage (only without an open position) and, for an averaging
 // paper, its position management (at once, an open position included) -
@@ -34,18 +33,12 @@ export function EditPaperDialog({ paper }: { paper: Paper }) {
       setOpen(false);
     }
   }, [fetcher.state, fetcher.data]);
-  // Averaging and single papers can sweep their settings (Find best params).
-  const sweepable = AVERAGING_KINDS.includes(paper.kind) || paper.kind === 'single';
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger render={<Button size="xs" variant="outline" />}>
         Edit
       </DialogTrigger>
-      <DialogContent
-        className={
-          sweepable ? 'sm:max-w-3xl' : undefined
-        }
-      >
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>{`Edit paper ${String(paper.id)}`}</DialogTitle>
           <DialogDescription>
@@ -91,7 +84,6 @@ export function EditPaperDialog({ paper }: { paper: Paper }) {
             </Button>
           </DialogFooter>
         </fetcher.Form>
-        {sweepable && <SweepPanel paper={paper} />}
       </DialogContent>
     </Dialog>
   );

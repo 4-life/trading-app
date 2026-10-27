@@ -7,6 +7,7 @@ import type { ActionResult } from "@/types/action";
 import type { Paper } from "@/types/paper";
 
 import { EditPaperDialog } from "./edit-paper-modal";
+import { isSweepable, SweepDialog } from "./sweep-modal";
 
 export function PaperActions({ paper }: { paper: Paper }) {
   const fetcher = useFetcher<ActionResult>();
@@ -21,6 +22,7 @@ export function PaperActions({ paper }: { paper: Paper }) {
   return (
     <div className="flex flex-wrap items-center gap-1">
       <EditPaperDialog paper={paper} />
+      {isSweepable(paper) && <SweepDialog paper={paper} />}
       {paper.enabled && paper.mode === "demo" && (
         <ConfirmDialog
           trigger={<Button size="xs" variant="outline" disabled={busy || !canGoLive} />}

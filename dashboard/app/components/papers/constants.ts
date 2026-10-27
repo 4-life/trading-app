@@ -44,7 +44,7 @@ export const EXIT_SWEEP_SORTS = [
   ["liquidations", "Liquidations"],
 ] as const;
 
-// "Find best params" (edit-paper-modal/sweep-panel.tsx): the inputs' defaults, the poll while a
+// "Find best params" (sweep-modal/sweep-panel.tsx): the inputs' defaults, the poll while a
 // sweep runs, and the stats lower is better for (higher for the rest).
 export const SWEEP_DEFAULT_MAX_LEVERAGE = 100;
 export const SWEEP_DEFAULT_MAX_MARGIN = 1000;

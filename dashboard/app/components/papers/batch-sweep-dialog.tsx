@@ -24,7 +24,7 @@ import { useSweepBatch } from "./hooks/use-sweep-batch";
 
 // Several averaging papers' settings sweeps, one after another, each on the
 // same budget - started overnight (docs/dashboard.md#papers). Each paper's
-// results are in its Edit dialog.
+// results are in its Sweep dialog.
 export function BatchSweepDialog({ papers }: { papers: Paper[] }) {
   const [open, setOpen] = useState(false);
   const fetcher = useFetcher<ActionResult>();
@@ -44,7 +44,7 @@ export function BatchSweepDialog({ papers }: { papers: Paper[] }) {
           <DialogTitle>Batch sweep</DialogTitle>
           <DialogDescription>
             Each picked paper's settings sweep, one after another, on the same budget each -
-            fixed and compounding. Results in each paper's Edit dialog.
+            fixed and compounding. Results in each paper's Sweep dialog.
           </DialogDescription>
         </DialogHeader>
         {batch && <BatchProgress batch={batch} papers={papers} />}

@@ -1,7 +1,7 @@
 import { api } from "@/lib/api";
 import type { ExitSweepRun, PaperSweep, SweepRun, SweepStatus } from "@/types/sweep";
 
-// A paper's settings sweep and its best runs so far, read by the edit dialog
+// A paper's settings sweep and its best runs so far, read by the sweep dialog
 // (and polled while it runs - the API is reachable from the server only):
 // /sweep-status?paper=<id>&kind=<paper kind>&sort=<stat>&order=<asc|desc> -
 // a single paper's runs are its exit runs. Also the sweep running on the
