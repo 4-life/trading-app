@@ -12,7 +12,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from sqlalchemy import ColumnElement, asc, delete, desc, select, update
+from sqlalchemy import ColumnElement, asc, delete, desc, false, select, update
 
 from app.backtest.exit_sweep import ExitSweepPlan, plan_exit_sweep, run_exit_sweep
 from app.backtest.models import ExitSweepRun, PaperSweep, SweepBatch, SweepRun
@@ -54,6 +54,10 @@ SweepSort = Literal[
     "take_profit_pct",
 ]
 INTERRUPTED = "interrupted - the API restarted while it ran"
+# A run is tight when its most margin locked at once left less than this
+# share of the sweep's max margin unused: live slippage and fees beyond the
+# backtest's would have liquidated it.
+MIN_HEADROOM = Decimal("0.2")
 
 # The sweeps running in this process (one uvicorn process); a sweep stored as
 # running but not here was cut off by a restart.
@@ -434,10 +438,14 @@ async def sweep_runs(
     order: Literal["asc", "desc"],
     limit: int,
     compound: bool = False,
+    max_margin: Decimal | None = None,
+    robust_only: bool = False,
 ) -> list[SweepRun]:
     """The sweep's runs so far with compounding on / off, sorted by `sort`
     (SAFEST_TOTAL, MOST_WON_TOTAL: their own order, `order` aside) - the
-    drained ones (stopped trading, out of cash) after the others."""
+    drained ones (stopped trading, out of cash) last, then the tight ones
+    (under MIN_HEADROOM of the sweep's `max_margin` left, fixed budget
+    only); `robust_only`: neither."""
     rankings: dict[str, list[ColumnElement[Any]]] = {
         SAFEST_TOTAL: [
             (SweepRun.give_ups + SweepRun.liquidations).asc(),
@@ -446,12 +454,19 @@ async def sweep_runs(
         MOST_WON_TOTAL: [SweepRun.won.desc(), SweepRun.total_usd.desc()],
     }
     ordering = rankings.get(sort) or [(desc if order == "desc" else asc)(getattr(SweepRun, sort))]
+    drained = SweepRun.drained_at.is_not(None)
+    # Compounding, a position's budget is the cash, past the max margin: no cap to measure.
+    tight = (
+        false()
+        if max_margin is None or compound
+        else SweepRun.most_margin_usd > max_margin * (1 - MIN_HEADROOM)
+    )
+    query = select(SweepRun).where(SweepRun.sweep_id == sweep_id, SweepRun.compound == compound)
+    if robust_only:
+        query = query.where(~drained, ~tight)
     async with async_session() as session:
         rows = await session.scalars(
-            select(SweepRun)
-            .where(SweepRun.sweep_id == sweep_id, SweepRun.compound == compound)
-            .order_by(SweepRun.drained_at.is_(None).desc(), *ordering, SweepRun.id)
-            .limit(limit)
+            query.order_by(drained.asc(), tight.asc(), *ordering, SweepRun.id).limit(limit)
         )
         return list(rows.all())
 

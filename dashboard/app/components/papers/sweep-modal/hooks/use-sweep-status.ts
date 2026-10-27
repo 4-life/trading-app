@@ -5,13 +5,15 @@ import type { PaperSweep, SweepStatus } from "@/types/sweep";
 
 import { SWEEP_ASCENDING, SWEEP_POLL_MS } from "../../constants";
 
-// A paper's settings sweep, its best runs so far by `sort` and the sweep
+// A paper's settings sweep, its best runs so far by `sort` (`robust`: the
+// drained and tight ones left out) and the sweep
 // running on the server (/sweep-status): loaded on open, on a new sort and
 // whenever `started` / `stopped` (the start and stop actions' results)
 // change; polled every SWEEP_POLL_MS while it - or another paper's - runs.
 export function useSweepStatus(
   paper: Pick<Paper, "id" | "kind">,
   sort: string,
+  robust: boolean,
   { starting, started, stopped }: { starting: boolean; started: unknown; stopped: unknown },
 ) {
   const [status, setStatus] = useState<SweepStatus | null>(null);
@@ -39,6 +41,7 @@ export function useSweepStatus(
       kind: paper.kind,
       sort,
       order: SWEEP_ASCENDING.includes(sort) ? "asc" : "desc",
+      robust: robust ? "1" : "0",
     });
     fetch(`/sweep-status?${query.toString()}`)
       .then(async (response) => {
@@ -69,7 +72,7 @@ export function useSweepStatus(
     return () => {
       cancelled = true;
     };
-  }, [paper.id, paper.kind, sort, tick, started, stopped]);
+  }, [paper.id, paper.kind, sort, robust, tick, started, stopped]);
 
   const sweep: PaperSweep | null = status?.sweep ?? null;
   const starts = starting || pending;

@@ -50,6 +50,8 @@ export const SWEEP_DEFAULT_MAX_LEVERAGE = 100;
 export const SWEEP_DEFAULT_MAX_MARGIN = 1000;
 export const SWEEP_POLL_MS = 5000;
 export const SWEEP_ASCENDING: readonly string[] = ["give_ups", "most_margin_usd", "liquidations"];
+// A run with less of the max margin left unused is tight (the API's MIN_HEADROOM).
+export const SWEEP_MIN_HEADROOM = 0.2;
 
 // The papers table's filter (hooks/use-paper-filter.ts): none, and this browser's key.
 export const NO_FILTER = {

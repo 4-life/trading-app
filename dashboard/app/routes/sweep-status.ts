@@ -3,7 +3,8 @@ import type { ExitSweepRun, PaperSweep, SweepRun, SweepStatus } from "@/types/sw
 
 // A paper's settings sweep and its best runs so far, read by the sweep dialog
 // (and polled while it runs - the API is reachable from the server only):
-// /sweep-status?paper=<id>&kind=<paper kind>&sort=<stat>&order=<asc|desc> -
+// /sweep-status?paper=<id>&kind=<paper kind>&sort=<stat>&order=<asc|desc>&robust=<0|1>
+// (robust: an averaging paper's drained and tight runs left out) -
 // a single paper's runs are its exit runs. Also the sweep running on the
 // server, any paper's - one at a time.
 export async function loader({ request }: { request: Request }) {
@@ -34,6 +35,9 @@ export async function loader({ request }: { request: Request }) {
   });
   const single = url.searchParams.get("kind") === "single";
   const path = single ? "exit-runs" : "runs";
+  if (!single && url.searchParams.get("robust") === "1") {
+    query.set("robust_only", "true");
+  }
   // An averaging paper's runs twice: on a fixed budget and compounding.
   const compounding = new URLSearchParams(query);
   compounding.set("compound", "true");

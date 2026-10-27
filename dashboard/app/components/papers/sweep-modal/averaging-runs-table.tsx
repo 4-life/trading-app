@@ -1,12 +1,17 @@
 import { formatUsd } from "@/lib/format";
 import type { SweepRun } from "@/types/sweep";
 
+import { SWEEP_MIN_HEADROOM } from "../constants";
+
 const tone = (x: number) => (x >= 0 ? "text-green-500" : "text-red-500");
 
 const stillOpen = (r: SweepRun) => r.positions === 0 && r.open_unrealized_usd !== 0;
 
-// An averaging paper's sweep runs (docs/papers.md#averaging-papers).
-export function AveragingRunsTable({ runs }: { runs: SweepRun[] }) {
+// An averaging paper's sweep runs (docs/papers.md#averaging-papers). `maxMargin`:
+// the sweep's, for each run's headroom - the max margin it left unused (none
+// compounding: its budget is the cash).
+export function AveragingRunsTable({ runs, maxMargin }: { runs: SweepRun[]; maxMargin: string | null }) {
+  const cap = maxMargin === null ? null : Number(maxMargin);
   return (
     <div className="overflow-x-auto">
       <table className="w-full whitespace-nowrap [&_td]:pr-3 [&_th]:pr-3">
@@ -21,6 +26,7 @@ export function AveragingRunsTable({ runs }: { runs: SweepRun[] }) {
             <th>Won</th>
             <th>Give-ups</th>
             <th>Most margin</th>
+            {cap !== null && <th>Headroom</th>}
             <th>Drained</th>
           </tr>
         </thead>
@@ -61,6 +67,7 @@ export function AveragingRunsTable({ runs }: { runs: SweepRun[] }) {
                 {`${String(r.give_ups)}${r.liquidations ? ` + ${String(r.liquidations)} liq.` : ""}`}
               </td>
               <td>{formatUsd(String(r.most_margin_usd))}</td>
+              {cap !== null && <Headroom used={r.most_margin_usd} cap={cap} />}
               <td className={r.drained_at ? "text-red-500" : "text-muted-foreground"}>
                 {r.drained_at ?? "—"}
               </td>
@@ -69,5 +76,14 @@ export function AveragingRunsTable({ runs }: { runs: SweepRun[] }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function Headroom({ used, cap }: { used: number; cap: number }) {
+  const left = cap > 0 ? 1 - used / cap : 0;
+  return (
+    <td className={left < SWEEP_MIN_HEADROOM ? "text-red-500" : undefined}>
+      {`${String(Math.round(left * 100))}%`}
+    </td>
   );
 }

@@ -506,14 +506,16 @@ async def get_sweep_runs(
     order: Literal["asc", "desc"] = "desc",
     limit: int = Query(default=5, ge=1, le=1000),
     compound: bool = False,
+    robust_only: bool = False,
 ) -> list[SweepRunOut]:
     """The runs of the paper's sweep stored so far (while it runs: the
     finished ones) with compounding on / off, sorted by `sort` - any of the
-    stats. `404` without a sweep."""
+    stats - the drained and tight ones last (`robust_only`: left out). `404`
+    without a sweep."""
     sweep = await latest_sweep(paper_id)
     if sweep is None:
         raise HTTPException(status_code=404, detail="no sweep for this paper yet")
-    runs = await sweep_runs(sweep.id, sort, order, limit, compound)
+    runs = await sweep_runs(sweep.id, sort, order, limit, compound, sweep.max_margin, robust_only)
     return [SweepRunOut.model_validate(r) for r in runs]
 
 

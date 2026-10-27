@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useFetcher } from "react-router";
 
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { formatUsd } from "@/lib/format";
 import { FIELD_CLASS } from "@/lib/styles";
 import type { ActionResult } from "@/types/action";
@@ -14,6 +15,7 @@ import {
   EXIT_SWEEP_SORTS,
   SWEEP_DEFAULT_MAX_LEVERAGE,
   SWEEP_DEFAULT_MAX_MARGIN,
+  SWEEP_MIN_HEADROOM,
   SWEEP_SORTS,
 } from "../constants";
 import { ExitRunsTable } from "./exit-runs-table";
@@ -31,8 +33,10 @@ export function SweepPanel({ paper }: { paper: Paper }) {
   const single = paper.kind === "single";
   const sorts = single ? EXIT_SWEEP_SORTS : SWEEP_SORTS;
   const [sort, setSort] = useState<string>(sorts[0][0]);
+  // An averaging paper's drained and tight runs (docs/papers.md#averaging-papers): hidden by default.
+  const [robust, setRobust] = useState(true);
   const { sweep, runs, compoundRuns, starting, running, busyPaper, loadError, checking } =
-    useSweepStatus(paper, sort, {
+    useSweepStatus(paper, sort, robust, {
     starting: fetcher.state !== "idle",
     started: fetcher.data,
     stopped: stopFetcher.data,
@@ -130,7 +134,16 @@ export function SweepPanel({ paper }: { paper: Paper }) {
             {` · max ×${String(Math.floor(Number(sweep.max_leverage) * 10) / 10)}`}
             {sweep.max_margin === null ? "" : `, max margin ${formatUsd(sweep.max_margin)}`}
           </p>
-          {runs.length > 0 && (
+          {!single && (
+            <label className="flex w-fit cursor-pointer items-center gap-1.5 text-muted-foreground">
+              <Switch checked={robust} onCheckedChange={setRobust} />
+              Hide drained and tight runs (under {SWEEP_MIN_HEADROOM * 100}% of the max margin left)
+            </label>
+          )}
+          {runs.length === 0 && compoundRuns.length > 0 && (
+            <p className="text-muted-foreground">No fixed-budget run left.</p>
+          )}
+          {(runs.length > 0 || compoundRuns.length > 0) && (
             <>
               <label className="flex items-center gap-1 text-muted-foreground">
                 {sweep.status === "running" ? "Best so far by" : "Best by"}
@@ -151,9 +164,9 @@ export function SweepPanel({ paper }: { paper: Paper }) {
               ) : (
                 <>
                   <p className="font-medium">Fixed budget - profits banked</p>
-                  <AveragingRunsTable runs={runs as SweepRun[]} />
+                  <AveragingRunsTable runs={runs as SweepRun[]} maxMargin={sweep.max_margin} />
                   <p className="pt-2 font-medium">Compounding - max margin + realized PnL</p>
-                  <AveragingRunsTable runs={compoundRuns} />
+                  <AveragingRunsTable runs={compoundRuns} maxMargin={null} />
                 </>
               )}
             </>
