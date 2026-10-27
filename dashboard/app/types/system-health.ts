@@ -6,4 +6,5 @@ export interface SystemHealth {
   kill_switch_active: boolean;
   healthy: boolean;
   checks: { name: string; ok: boolean; detail: string }[];
+  deploying: boolean; // a deploy running or just finished: restarts, not failures
 }

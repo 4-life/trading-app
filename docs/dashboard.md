@@ -101,7 +101,10 @@ In the header: the [watchdog](watchdog.md) checks and the kill switch. All
 passing and the kill switch off - one pulsing green dot, "All systems OK" and
 when it was checked; otherwise only the failing checks (red, with their
 detail) and the kill switch, if active. When the latest health load failed:
-the last known status, with a grey dot ("Health: last known").
+the last known status, with a grey dot ("Health: last known"). During a
+[deploy](watchdog.md#deploys) — running, or its services still settling — a
+spinner and "Deploying…" instead of the restarts' failing checks (also while
+the API itself restarts: the last known status was deploying).
 
 ## Assets
 

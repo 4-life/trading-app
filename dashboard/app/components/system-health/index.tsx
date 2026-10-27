@@ -1,3 +1,5 @@
+import { Loader2 } from "lucide-react";
+
 import { LocalTime } from "@/components/local-time";
 import type { SystemHealth } from "@/types/system-health";
 
@@ -6,8 +8,18 @@ import { StatusDot } from "./status-dot";
 
 // The header's watchdog status (docs/dashboard.md#system-health): all green,
 // one pulsing dot; else only the failing checks and the kill switch. Stale
-// (its latest load failed): the last known, a grey dot.
+// (its latest load failed): the last known, a grey dot. A deploy (running, or
+// its services still settling): a spinner instead of the restarts' failures -
+// also while the API itself restarts (stale, the last known deploying).
 export function HealthStatus({ health, stale }: { health: SystemHealth | null; stale: boolean }) {
+  if (health?.deploying) {
+    return (
+      <span className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" />
+        Deploying…
+      </span>
+    );
+  }
   if (health === null || health.checked_at === null) {
     return (
       <span className="text-sm text-muted-foreground">

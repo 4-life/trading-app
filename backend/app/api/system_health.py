@@ -1,6 +1,9 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from app.system import deploy
 from app.watchdog.redis_client import get_last_check_results, is_kill_switch_active
 
 router = APIRouter()
@@ -17,18 +20,27 @@ class SystemHealth(BaseModel):
     kill_switch_active: bool
     healthy: bool
     checks: list[CheckResultOut]
+    # A deploy is running or just finished (app/system/deploy.py quiet): the
+    # failing checks are services restarting.
+    deploying: bool = False
 
 
 @router.get("/system-health", response_model=SystemHealth)
 async def system_health() -> SystemHealth:
     payload = await get_last_check_results()
     kill_switch_active = await is_kill_switch_active()
+    current = await deploy.current()
+    deploying = current is not None and current.quiet(datetime.now(UTC))
 
     if payload is None:
         # watchdog hasn't completed a check pass yet (just started, or isn't
         # running) - distinct from "unhealthy": there's simply no data yet.
         return SystemHealth(
-            checked_at=None, kill_switch_active=kill_switch_active, healthy=False, checks=[]
+            checked_at=None,
+            kill_switch_active=kill_switch_active,
+            healthy=False,
+            checks=[],
+            deploying=deploying,
         )
 
     checks = [CheckResultOut(**c) for c in payload["results"]]
@@ -37,4 +49,5 @@ async def system_health() -> SystemHealth:
         kill_switch_active=kill_switch_active,
         healthy=all(c.ok for c in checks),
         checks=checks,
+        deploying=deploying,
     )
