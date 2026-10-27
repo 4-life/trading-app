@@ -5,6 +5,8 @@ import { SWEEP_MIN_HEADROOM } from "../constants";
 
 const tone = (x: number) => (x >= 0 ? "text-green-500" : "text-red-500");
 
+const RISKY_CHANCE = 0.1;
+
 const stillOpen = (r: SweepRun) => r.positions === 0 && r.open_unrealized_usd !== 0;
 
 // An averaging paper's sweep runs (docs/papers.md#averaging-papers). `maxMargin`:
@@ -37,7 +39,13 @@ export function AveragingRunsTable({
             <th>Most margin</th>
             {cap !== null && <th>Headroom</th>}
             <th>Survives</th>
-            <th>Drained</th>
+            <th title="The share of the strategy's entries that went past its survivable move within 7 days">
+              P(give-up)
+            </th>
+            <th title="Expected PnL per position: its average win, less the give-up loss, at those odds">
+              EV/pos
+            </th>
+            <th title="The probability of its cash running out">P(ruin)</th>
           </tr>
         </thead>
         <tbody>
@@ -79,9 +87,11 @@ export function AveragingRunsTable({
               <td>{formatUsd(String(r.most_margin_usd))}</td>
               {cap !== null && <Headroom used={r.most_margin_usd} cap={cap} />}
               <Survives move={r.survivable_move_pct} needed={needed} />
-              <td className={r.drained_at ? "text-red-500" : "text-muted-foreground"}>
-                {r.drained_at ?? "—"}
+              <Chance value={r.give_up_probability} />
+              <td className={r.expected_pnl_usd === null ? "text-muted-foreground" : tone(r.expected_pnl_usd)}>
+                {r.expected_pnl_usd === null ? "—" : formatUsd(String(r.expected_pnl_usd))}
               </td>
+              <Chance value={r.ruin_probability} />
             </tr>
           ))}
         </tbody>
@@ -108,6 +118,18 @@ function Survives({ move, needed }: { move: number | null; needed: number | null
   return (
     <td className={needed !== null && move < needed ? "text-red-500" : undefined}>
       {`${(move * 100).toFixed(1)}%`}
+    </td>
+  );
+}
+
+// A probability - red from RISKY_CHANCE.
+function Chance({ value }: { value: number | null }) {
+  if (value === null) {
+    return <td className="text-muted-foreground">—</td>;
+  }
+  return (
+    <td className={value >= RISKY_CHANCE ? "text-red-500" : undefined}>
+      {`${(value * 100).toFixed(value < 0.01 && value > 0 ? 2 : 1)}%`}
     </td>
   );
 }

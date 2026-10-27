@@ -141,6 +141,12 @@ class SweepRun(Base):
     # How far the price can move against its first entry before it gives up,
     # a share of the price (app/backtest/sweep.py survivable_move); NULL: older runs.
     survivable_move_pct: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    # Its odds (app/backtest/sweep.py _odds): the share of the strategy's
+    # entries it would give up on, the expected PnL per position and the
+    # probability of its cash running out; NULL: older runs, or no entries.
+    give_up_probability: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    expected_pnl_usd: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    ruin_probability: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
 
 
 class ExitSweepRun(Base):

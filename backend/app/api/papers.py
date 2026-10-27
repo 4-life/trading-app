@@ -39,6 +39,7 @@ from app.papers.sweeps import (
     SweepNotRunning,
     SweepSort,
     exit_sweep_runs,
+    fragile_counts,
     latest_batch,
     latest_sweep,
     running_sweep,
@@ -386,6 +387,11 @@ class PaperSweepOut(BaseModel):
     # SURVIVAL_MARGIN x, a share of the price; null: unknown.
     adverse_move_pct: Decimal | None = None
     survival_margin: float = SURVIVAL_MARGIN
+    # GET .../sweep: of its runs so far, how many are drained, tight (fixed
+    # budget) and fragile - each on its own (an averaging sweep's; 0 otherwise).
+    drained_runs: int = 0
+    tight_runs: int = 0
+    fragile_runs: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -415,6 +421,11 @@ class SweepRunOut(BaseModel):
     drained_at: date | None  # the cash fell under the initial size: it stopped trading
     # How far the price can move against its first entry before it gives up; null: older runs.
     survivable_move_pct: float | None = None
+    # Its odds: the share of the strategy's entries it would give up on, the
+    # expected PnL per position, the probability of its cash running out; null: unknown.
+    give_up_probability: float | None = None
+    expected_pnl_usd: float | None = None
+    ruin_probability: float | None = None
 
     model_config = {"from_attributes": True}
 
@@ -461,11 +472,19 @@ async def get_running_sweep() -> PaperSweepOut | None:
 
 @router.get("/papers/{paper_id}/sweep", response_model=PaperSweepOut)
 async def get_paper_sweep(paper_id: int) -> PaperSweepOut:
-    """The paper's sweep (its latest): status and progress. `404` without one."""
+    """The paper's sweep (its latest): status, progress and how many of its
+    runs are drained / tight / fragile. `404` without one."""
     sweep = await latest_sweep(paper_id)
     if sweep is None:
         raise HTTPException(status_code=404, detail="no sweep for this paper yet")
-    return PaperSweepOut.model_validate(sweep)
+    counts = await fragile_counts(sweep)
+    return PaperSweepOut.model_validate(sweep).model_copy(
+        update={
+            "drained_runs": counts.drained,
+            "tight_runs": counts.tight,
+            "fragile_runs": counts.fragile,
+        }
+    )
 
 
 class ExitSweepRunOut(BaseModel):

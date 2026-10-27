@@ -33,6 +33,10 @@ export const SWEEP_SORTS = [
   ["give_ups", "Give-ups"],
   ["most_margin_usd", "Most margin"],
   ["cash_drawdown_usd", "Cash drawdown"],
+  // The odds (docs/papers.md#averaging-papers).
+  ["expected_pnl_usd", "EV per position"],
+  ["ruin_probability", "P(ruin)"],
+  ["give_up_probability", "P(give-up)"],
 ] as const;
 
 export const EXIT_SWEEP_SORTS = [
@@ -49,7 +53,13 @@ export const EXIT_SWEEP_SORTS = [
 export const SWEEP_DEFAULT_MAX_LEVERAGE = 100;
 export const SWEEP_DEFAULT_MAX_MARGIN = 1000;
 export const SWEEP_POLL_MS = 5000;
-export const SWEEP_ASCENDING: readonly string[] = ["give_ups", "most_margin_usd", "liquidations"];
+export const SWEEP_ASCENDING: readonly string[] = [
+  "give_ups",
+  "most_margin_usd",
+  "liquidations",
+  "ruin_probability",
+  "give_up_probability",
+];
 // A run with less of the max margin left unused is tight (the API's MIN_HEADROOM).
 export const SWEEP_MIN_HEADROOM = 0.1;
 

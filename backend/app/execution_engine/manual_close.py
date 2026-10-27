@@ -7,7 +7,8 @@
   switch.
 - Doesn't exist: the owner already closed a live position on Hyperliquid
   (or Hyperliquid liquidated it) - record it closed at the price they
-  enter, reason `closed_on_exchange`. Nothing is sent to the exchange.
+  enter, reason `closed_on_exchange`. Nothing is sent to the exchange. The
+  paper is disabled with it, as by a manual close.
 """
 
 from datetime import UTC, datetime
@@ -27,6 +28,7 @@ from app.papers.models import Paper
 from app.system.exchange_api import taker_fee_rate
 
 CLOSED_ON_EXCHANGE = "closed_on_exchange"
+CLOSED_ON_EXCHANGE_STOP = "position closed on the exchange"
 
 
 class NoOpenPosition(Exception):
@@ -94,4 +96,8 @@ async def record_closed_on_exchange(position_id: int, close_price: Decimal) -> N
         paper = await session.get(Paper, position.paper_id)
         if paper is not None:
             await update_profitability(session, paper, "live")
+            paper.enabled = False
+            paper.disabled_by = "owner"
+            paper.disabled_reason = CLOSED_ON_EXCHANGE_STOP
+            paper.updated_at = datetime.now(UTC)
     await notify_closed_on_exchange(position_id, position.size, close_price)

@@ -8,6 +8,34 @@ import { toast } from "@/components/ui/toast";
 const failing = new Map<string, Set<string>>();
 const open = new Map<string, string>();
 let nextId = 0;
+// A deploy running (or settling): one "Deploying…" toast - a warning with a
+// spinner - instead of the unreachable ones, its restarts being expected.
+const DEPLOYING_TOAST = "deploying";
+let deploying = false;
+
+export function reportDeploying(on: boolean) {
+  if (on === deploying) {
+    return;
+  }
+  deploying = on;
+  setTimeout(() => {
+    if (on) {
+      for (const id of open.values()) {
+        toast.close(id);
+      }
+      open.clear();
+      toast.add({
+        id: DEPLOYING_TOAST,
+        title: "Deploying…",
+        description: "Services are restarting - errors meanwhile are expected.",
+        type: "deploying",
+        timeout: 0,
+      });
+    } else {
+      toast.close(DEPLOYING_TOAST);
+    }
+  });
+}
 
 function description(parts: Set<string>): string {
   return `Not loaded: ${[...parts].sort().join(", ")}. Showing the last data.`;
@@ -17,6 +45,9 @@ export function reportReachable(group: string, part: string, ok: boolean, title:
   const parts = failing.get(group) ?? new Set<string>();
   failing.set(group, parts);
   const changed = ok ? parts.delete(part) : !parts.has(part) && Boolean(parts.add(part));
+  if (deploying) {
+    return; // tracked, not shown: the deploying toast says it
+  }
   const id = open.get(group);
   if (parts.size === 0) {
     if (id !== undefined) {

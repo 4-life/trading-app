@@ -1,6 +1,8 @@
 import { Loader2 } from "lucide-react";
+import { useEffect } from "react";
 
 import { LocalTime } from "@/components/local-time";
+import { reportDeploying } from "@/lib/unreachable";
 import type { SystemHealth } from "@/types/system-health";
 
 import { CheckList } from "./check-list";
@@ -12,7 +14,12 @@ import { StatusDot } from "./status-dot";
 // its services still settling): a spinner instead of the restarts' failures -
 // also while the API itself restarts (stale, the last known deploying).
 export function HealthStatus({ health, stale }: { health: SystemHealth | null; stale: boolean }) {
-  if (health?.deploying) {
+  const deploying = Boolean(health?.deploying);
+  // Also a toast, wherever the page is scrolled.
+  useEffect(() => {
+    reportDeploying(deploying);
+  }, [deploying]);
+  if (deploying) {
     return (
       <span className="flex items-center gap-2 text-sm text-muted-foreground">
         <Loader2 className="size-4 animate-spin" />

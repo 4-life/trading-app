@@ -139,11 +139,20 @@ export function SweepPanel({ paper }: { paper: Paper }) {
             {` · max ×${String(Math.floor(Number(sweep.max_leverage) * 10) / 10)}`}
             {sweep.max_margin === null ? "" : `, max margin ${formatUsd(sweep.max_margin)}`}
           </p>
+          {!single && sweep.runs_done > 0 && (
+            <p className="text-muted-foreground">
+              {`Of ${sweep.runs_done.toLocaleString()} runs: ` +
+                `${sweep.drained_runs.toLocaleString()} drained (out of cash) · ` +
+                `${sweep.tight_runs.toLocaleString()} tight · ` +
+                `${sweep.fragile_runs.toLocaleString()} fragile`}
+            </p>
+          )}
           {needed !== null && sweep.adverse_move_pct !== null && (
             <p className="text-muted-foreground">
-              {`${paper.asset} moved up to ${(Number(sweep.adverse_move_pct) * 100).toFixed(1)}% ` +
-                `against 95% of the strategy's entries within 7 days - a run must survive ` +
-                `${String(sweep.survival_margin)}x that: ${(needed * 100).toFixed(1)}% (fragile under it)`}
+              {`${paper.asset}'s worst move against an entry within 7 days: ` +
+                `${(Number(sweep.adverse_move_pct) * 100).toFixed(1)}% or less in 95% of cases. ` +
+                `Runs need to survive ${(needed * 100).toFixed(1)}% ` +
+                `(${String(sweep.survival_margin)}×) - fragile below that.`}
             </p>
           )}
           {!single && (

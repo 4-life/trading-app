@@ -8,11 +8,12 @@ only) - no other sweep starts meanwhile."""
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from sqlalchemy import ColumnElement, asc, delete, desc, func, select, update
+from sqlalchemy import ColumnElement, asc, delete, desc, false, func, select, update
 
 from app.backtest.exit_sweep import ExitSweepPlan, plan_exit_sweep, run_exit_sweep
 from app.backtest.models import ExitSweepRun, PaperSweep, SweepBatch, SweepRun
@@ -50,6 +51,9 @@ SweepSort = Literal[
     "liquidations",
     "most_margin_usd",
     "cash_drawdown_usd",
+    "expected_pnl_usd",
+    "give_up_probability",
+    "ruin_probability",
     "leverage",
     "initial_size_usd",
     "take_profit_pct",
@@ -108,6 +112,10 @@ async def _close_interrupted() -> PaperSweep | None:
     return running
 
 
+def _num(r: dict[str, object], key: str) -> Decimal | None:
+    return None if r.get(key) is None else Decimal(str(r[key]))
+
+
 def _date(value: object) -> date | None:
     return None if value is None else date.fromisoformat(str(value))
 
@@ -138,7 +146,10 @@ def _run_row(sweep_id: int, r: dict[str, object]) -> SweepRun:
         most_margin_usd=num("all_most_cash_usd"),
         cash_drawdown_usd=num("all_cash_drawdown_usd"),
         drained_at=_date(r.get("drained_at")),
-        survivable_move_pct=None if r.get("survivable_move") is None else num("survivable_move"),
+        survivable_move_pct=_num(r, "survivable_move"),
+        give_up_probability=_num(r, "give_up_probability"),
+        expected_pnl_usd=_num(r, "expected_pnl_usd"),
+        ruin_probability=_num(r, "ruin_probability"),
     )
 
 
@@ -439,6 +450,48 @@ async def latest_sweep(paper_id: int) -> PaperSweep | None:
     return sweep
 
 
+_DRAINED = SweepRun.drained_at.is_not(None)
+
+
+def _tight(max_margin: Decimal) -> ColumnElement[bool]:
+    return SweepRun.most_margin_usd > max_margin * (1 - MIN_HEADROOM)
+
+
+def _short_survival(adverse_move: Decimal) -> ColumnElement[bool]:
+    """Surviving under SURVIVAL_MARGIN x the asset's adverse move; older
+    runs, not measured, don't."""
+    survives = func.coalesce(SweepRun.survivable_move_pct, 1)
+    return survives < adverse_move * Decimal(str(SURVIVAL_MARGIN))
+
+
+@dataclass(frozen=True)
+class FragileCounts:
+    """How many of a sweep's runs are drained, tight (fixed budget only) and
+    fragile - each counted on its own (a run can be several)."""
+
+    drained: int
+    tight: int
+    fragile: int
+
+
+async def fragile_counts(sweep: PaperSweep) -> FragileCounts:
+    """sweep_runs' drained / tight / fragile, over all the sweep's runs so far."""
+    fixed = SweepRun.compound.is_(False)
+    tight = false() if sweep.max_margin is None else fixed & _tight(sweep.max_margin)
+    fragile = false() if sweep.adverse_move_pct is None else _short_survival(sweep.adverse_move_pct)
+    async with async_session() as session:
+        row = (
+            await session.execute(
+                select(
+                    func.count().filter(_DRAINED),
+                    func.count().filter(tight),
+                    func.count().filter(fragile),
+                ).where(SweepRun.sweep_id == sweep.id)
+            )
+        ).one()
+    return FragileCounts(int(row[0]), int(row[1]), int(row[2]))
+
+
 async def sweep_runs(
     sweep_id: int,
     sort: SweepSort,
@@ -463,15 +516,16 @@ async def sweep_runs(
         ],
         MOST_WON_TOTAL: [SweepRun.won.desc(), SweepRun.total_usd.desc()],
     }
-    ordering = rankings.get(sort) or [(desc if order == "desc" else asc)(getattr(SweepRun, sort))]
-    drained = SweepRun.drained_at.is_not(None)
-    fragile: list[ColumnElement[bool]] = [drained]
+    # Older runs without a stat (NULL): last either way.
+    ordering = rankings.get(sort) or [
+        (desc if order == "desc" else asc)(getattr(SweepRun, sort)).nulls_last()
+    ]
+    fragile: list[ColumnElement[bool]] = [_DRAINED]
     # Compounding, a position's budget is the cash, past the max margin: no cap to measure.
     if max_margin is not None and not compound:
-        fragile.append(SweepRun.most_margin_usd > max_margin * (1 - MIN_HEADROOM))
+        fragile.append(_tight(max_margin))
     if adverse_move is not None:
-        survives = func.coalesce(SweepRun.survivable_move_pct, 1)
-        fragile.append(survives < adverse_move * Decimal(str(SURVIVAL_MARGIN)))
+        fragile.append(_short_survival(adverse_move))
     query = select(SweepRun).where(SweepRun.sweep_id == sweep_id, SweepRun.compound == compound)
     if robust_only:
         query = query.where(*(~f for f in fragile))

@@ -7,7 +7,13 @@ import pytest
 
 from app.backtest.averaging import Rules, in_trend, simulate, states_after
 from app.backtest.bars import Bar, Fill, SimTrade
-from app.backtest.sweep import adverse_move, drained_at, survivable_move
+from app.backtest.sweep import (
+    adverse_move,
+    drained_at,
+    give_up_probe,
+    ruin_probability,
+    survivable_move,
+)
 from app.executors.position_management import (
     MAX_DRAWDOWN_EXIT,
     OUT_OF_MARGIN_EXIT,
@@ -447,3 +453,20 @@ def test_adverse_move_is_the_percentile_of_the_worst_moves_against_the_entries()
     # A short against the highs: 101 at most.
     assert adverse_move(bars, [_entry(0, direction="short")]) == pytest.approx(0.01)
     assert adverse_move(bars, []) is None
+
+
+def test_the_give_up_probe_costs_what_the_give_up_loses() -> None:
+    # $10 at 10x, no add: gives up 7% down - 70% of the margin lost.
+    move, loss = give_up_probe(replace(PLAN_F, max_margin=10))
+    assert move == pytest.approx(0.07)
+    assert loss == pytest.approx(7)
+
+
+def test_ruin_is_certain_without_an_edge_and_rare_with_a_big_one() -> None:
+    assert ruin_probability(0.2, 50, 300, 750) == 1.0  # 0.8 x 50 < 0.2 x 300
+    assert ruin_probability(0.0, 50, 300, 750) == 0.0  # never gives up
+    assert ruin_probability(0.1, 50, 300, 0) == 1.0  # no room left
+    assert 0.1 < ruin_probability(0.1, 50, 300, 750) < 0.3
+    assert ruin_probability(0.01, 50, 300, 750) < 0.001
+    # More room: less likely.
+    assert ruin_probability(0.1, 50, 300, 1500) < ruin_probability(0.1, 50, 300, 750)

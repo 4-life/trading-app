@@ -21,6 +21,10 @@ export interface PaperSweep {
   // a run must survive survival_margin x it.
   adverse_move_pct: string | null;
   survival_margin: number;
+  // Of its runs so far: drained, tight (fixed budget) and fragile - each on its own.
+  drained_runs: number;
+  tight_runs: number;
+  fragile_runs: number;
 }
 
 // One run of a sweep: its settings and stats (GET /papers/{id}/sweep/runs).
@@ -48,6 +52,11 @@ export interface SweepRun {
   drained_at: string | null;
   // How far the price can move against its first entry before it gives up; null: older runs.
   survivable_move_pct: number | null;
+  // Its odds: the share of the strategy's entries it would give up on, the
+  // expected PnL per position, the probability of its cash running out; null: unknown.
+  give_up_probability: number | null;
+  expected_pnl_usd: number | null;
+  ruin_probability: number | null;
 }
 
 // One run of a single paper's sweep (GET /papers/{id}/sweep/exit-runs): its
