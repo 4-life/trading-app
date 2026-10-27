@@ -56,6 +56,7 @@ from itertools import product
 
 from app.backtest.averaging import (
     ENTRY_SIGNALS,
+    FILL_SLIPPAGE,
     LIQUIDATION_EXIT,
     STRATEGY_TRADES,
     AveragingTrade,
@@ -173,6 +174,7 @@ def run(job: Job) -> list[dict[str, object]]:
             max_margin=MAX_MARGIN,
             intraday=job.intraday,
             maintenance_notional=job.limits.maintenance_margin if job.limits else None,
+            slippage=FILL_SLIPPAGE,
         )
         trades = simulate(job.bars, job.trades, rules, job.fee_rate, None, job.signals)
         rows.append(

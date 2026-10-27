@@ -415,3 +415,16 @@ def test_drained_at_the_close_that_takes_the_cash_under_the_initial_size() -> No
     cash = 30 + sum(t.pnl_usd for t in trades if t.closed_at <= (drained or T0))
     assert drained is not None and cash < 10
     assert drained_at(trades, replace(rules, max_margin=None)) is None
+
+
+def test_slippage_fills_every_fill_against_the_position() -> None:
+    bars = _bars((100, 100, 100, 100), (100, 100, 94.5, 96), (96, 131, 96, 130))
+    exact = simulate(bars, [_entry(0, sell_at=(2, 130))], PLAN_F)
+    [t] = simulate(bars, [_entry(0, sell_at=(2, 130))], replace(PLAN_F, slippage=0.001))
+    assert t.fills[0].price == pytest.approx(100.1)  # a buy higher
+    assert t.close_price == pytest.approx(130 * 0.999)  # a sell lower
+    assert t.pnl_usd < exact[0].pnl_usd
+    # A short: mirrored.
+    short = replace(PLAN_F, direction="short", slippage=0.001)
+    [s] = simulate(bars, [_entry(0, direction="short")], short)
+    assert s.fills[0].price == pytest.approx(99.9)

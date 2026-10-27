@@ -48,7 +48,9 @@ it needed) and the PnL net of fees, and `return_pct` = PnL / that margin /
 the paper's leverage - so the risk
 engine, which multiplies by the leverage, reads % of margin. Its buys (the
 first entry and every add) go to `backtest_fills`, for the chart.
-Fees: the selected provider's maker fee on every fill.
+Fees: the selected provider's maker fee on every fill. Slippage: every fill
+FILL_SLIPPAGE against the position - a buy higher, a sell lower - so a run
+that only survives on the exact levels doesn't.
 
 A short paper (`direction` short) is the same, mirrored: the strategy's short
 entries open it and its short exits are the sell signals, each candle takes
@@ -70,7 +72,7 @@ from decimal import Decimal
 from sqlalchemy import delete, select
 
 from app.backtest import regime, supertrend, vwap
-from app.backtest.bars import Bar, Fill, SimTrade, load_bars
+from app.backtest.bars import STOP_SLIPPAGE, Bar, Fill, SimTrade, load_bars
 from app.backtest.models import OPEN_AT_END, BacktestFill, BacktestTrade
 from app.config import settings
 from app.db import async_session
@@ -90,6 +92,9 @@ from app.system.exchange_api import maker_fee_rate
 logger = logging.getLogger(__name__)
 
 LIQUIDATION_EXIT = "liquidation"  # the execution engine's maintenance-margin close
+# A paper's every fill (entries, adds, unwinds, closes) this much against it:
+# the backtest's exact levels don't happen live.
+FILL_SLIPPAGE = STOP_SLIPPAGE
 # With this many dip units held (the first buy not counted), the grid sells
 # them in pairs - the two cheapest at the higher one's price (backtest only).
 PAIR_FROM_DIPS = 3
@@ -134,6 +139,9 @@ class Rules:
     maintenance_notional: float | None = None
     # long / short / both: the positions it opens - a short's mirrored (the module's doc).
     direction: str = "long"
+    # Every fill this much (a share of the price) against the position - a buy
+    # higher, a sell lower (a short: mirrored); FILL_SLIPPAGE for a paper.
+    slippage: float = 0.0
 
     @property
     def directions(self) -> tuple[str, ...]:
@@ -168,6 +176,7 @@ class Position:
     margin: float = 0.0  # backing the size held
     peak_margin: float = 0.0  # the most locked at once - the cash it needed
     fees: float = 0.0  # the buys'
+    slippage: float = 0.0  # Rules.slippage
     realized: float = 0.0  # the sells' PnL, net of their fees
     fills: list[Fill] = field(default_factory=list)
     # The grid's units held (price, size): the first buy, every dip add and
@@ -225,6 +234,7 @@ class Position:
         `unit_price` (its profit on the fill: size x (price - unit_price),
         before fees); its share of the margin is released - the execution
         engine's partial close."""
+        price *= 1 - self.sign * self.slippage
         sold = self.size * fraction
         released = self.margin * fraction
         self.realized += self.sign * sold * (price - self.entry) - sold * price * fee_rate
@@ -246,6 +256,9 @@ class Position:
         """`dip`: a dip add (the margin left down to ADD_AT_MARGIN_LEFT) - a
         unit of the grid whatever its price; so is the first buy and a signal
         add under it."""
+        price *= 1 + self.sign * self.slippage
+        if not self.fills:
+            self.first_buy = price  # its fill
         notional = margin * leverage
         if not self.fills or dip or self.sign * (self.first_buy - price) > 0:
             self.lots.append((price, notional / price))
@@ -337,6 +350,8 @@ class AveragingTrade:
 def _close(
     pos: Position, bar: Bar, price: float, reason: str, rules: Rules, fee_rate: float
 ) -> AveragingTrade:
+    if reason != OPEN_AT_END:  # a close fills - valued at the last close, it doesn't
+        price *= 1 - pos.sign * pos.slippage
     fees = pos.fees + pos.size * price * fee_rate
     pnl = pos.sign * pos.size * (price - pos.entry) - fees + pos.realized
     if reason == LIQUIDATION_EXIT and rules.maintenance_notional is not None:
@@ -457,7 +472,7 @@ def simulate(
 
     def open_at(time: datetime, reason: str, price: float, sign: int) -> Position:
         """A new position on the cash."""
-        return Position(time, reason, price, sign, cap(budget))
+        return Position(time, reason, price, sign, cap(budget), slippage=rules.slippage)
 
     for bar in bars:
         if pos is not None:
@@ -548,6 +563,7 @@ def rules_of(paper: Paper, limits: Limits | None = None) -> Rules:
         compound=bool(paper.compound_margin),
         maintenance_notional=None if limits is None else limits.maintenance_margin,
         direction=paper.direction,
+        slippage=FILL_SLIPPAGE,
     )
 
 
