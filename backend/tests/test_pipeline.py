@@ -230,6 +230,12 @@ async def test_manual_close_through_the_queue() -> None:
     assert closed.realized_pnl_usd is not None
     # Fees alone make the realized PnL non-zero.
     assert (await paper()).profitability_demo != 0
+    # The manual close stopped the paper; enabled again for the tests after.
+    stopped = await paper()
+    assert not stopped.enabled and stopped.disabled_reason == "position closed manually"
+    async with client() as c:
+        response = await c.post(f"/papers/{stopped.id}/enable", headers=auth())
+    assert response.status_code == 200, response.text
 
 
 async def test_liquidation_below_maintenance_margin() -> None:

@@ -40,7 +40,21 @@ logger = logging.getLogger(__name__)
 
 LIQUIDATION = "liquidation"
 TAKE_PROFIT_STOP = "take-profit reached - enable it again at the next bottom"
+# The dashboard's Close (app/execution_engine/manual_close.py): the paper stops with it.
+MANUAL_CLOSE = "manual_close"
+MANUAL_CLOSE_STOP = "position closed manually"
 SERVICE_NAME = "execution-engine"
+
+
+def _stop_reason(paper: Paper, reason: str) -> str | None:
+    """Why closing the whole position disables the paper - the owner's
+    manual close, or an averaging paper's take-profit (stops_paper); None:
+    it keeps running."""
+    if reason == MANUAL_CLOSE:
+        return MANUAL_CLOSE_STOP
+    if stops_paper(paper, reason):
+        return TAKE_PROFIT_STOP
+    return None
 
 
 class FillError(Exception):
@@ -499,7 +513,7 @@ async def _exit(
 
 async def _process(decision_id: int, adapter: MarketAdapter) -> None:
     placed: int | None = None
-    stopped: Paper | None = None  # an averaging paper stopped at its take-profit
+    stopped: tuple[Paper, str] | None = None  # the paper disabled by this close, and why
     async with async_session() as session, session.begin():
         decision = await session.scalar(
             select(TradingDecision)
@@ -541,7 +555,8 @@ async def _process(decision_id: int, adapter: MarketAdapter) -> None:
             return
         decision.outcome = "placed"
         decision.order_id = placed = order_id
-        if decision.signal == "exit" and stops_paper(paper, decision.reason):
+        stop = _stop_reason(paper, decision.reason) if decision.signal == "exit" else None
+        if stop is not None:
             still_open = await session.scalar(
                 select(Position.id).where(
                     Position.paper_id == paper.id, Position.closed_at.is_(None)
@@ -549,10 +564,10 @@ async def _process(decision_id: int, adapter: MarketAdapter) -> None:
             )
             if still_open is None:  # a partial close keeps it running
                 paper.enabled = False
-                paper.disabled_by = "owner"  # the owner's rule: stop at the take-profit
-                paper.disabled_reason = TAKE_PROFIT_STOP
+                paper.disabled_by = "owner"  # the owner's close / rule: stop at the take-profit
+                paper.disabled_reason = stop
                 paper.updated_at = datetime.now(UTC)
-                stopped = paper
+                stopped = paper, stop
         logger.info(
             "decision %d placed: paper %d %s %s %s (%s)",
             decision_id,
@@ -565,7 +580,8 @@ async def _process(decision_id: int, adapter: MarketAdapter) -> None:
     if placed is not None:  # committed - now tell the owner
         await notify_order(placed)
     if stopped is not None:
-        await alert(SERVICE_NAME, "info", f"paper {stopped.id} {stopped.asset}: {TAKE_PROFIT_STOP}")
+        disabled, why = stopped
+        await alert(SERVICE_NAME, "info", f"paper {disabled.id} {disabled.asset}: {why}")
 
 
 async def _liquidate(

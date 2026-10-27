@@ -2,7 +2,8 @@
 
 - Close: queues an exit request for one open position. It goes through the
   same order queue as any executor exit (risk engine, then execution engine)
-  and is logged with reason `manual_close`. Doesn't touch the auto-trading
+  and is logged with reason `manual_close`; once it's placed the paper is
+  disabled (app/execution_engine/engine.py). Doesn't touch the auto-trading
   switch.
 - Doesn't exist: the owner already closed a live position on Hyperliquid
   (or Hyperliquid liquidated it) - record it closed at the price they
@@ -17,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.db import async_session
-from app.execution_engine.engine import entry_fee_share, update_profitability
+from app.execution_engine.engine import MANUAL_CLOSE, entry_fee_share, update_profitability
 from app.execution_engine.models import IN_FLIGHT_OUTCOMES, Position, TradingDecision
 from app.executors.base import latest_price
 from app.notifications.trades import notify_closed_on_exchange
@@ -25,7 +26,6 @@ from app.order_queue import Signal, queue_decision
 from app.papers.models import Paper
 from app.system.exchange_api import taker_fee_rate
 
-MANUAL_CLOSE = "manual_close"
 CLOSED_ON_EXCHANGE = "closed_on_exchange"
 
 

@@ -122,7 +122,7 @@ A new `single` paper isn't traded straight away: its data is prepared first (`ba
    - the paper's leverage must be a whole number, and an [exchange API](dashboard.md#exchange-api) must be set in settings;
    - only one enabled live paper per asset (demo allows several, but only one of them can hold the asset at a time — see [risk-engine](risk-engine.md)). While an asset is live, no other paper can go live on it; the slot frees up only after the owner or the risk engine disables that live paper.
 3. A paper is disabled only:
-   - manually by the owner, or
+   - manually by the owner — also by closing its position by hand (the positions table's **Close**: disabled once the exit is placed, "position closed manually"), or
    - by its [scanner](#scanner-papers) once it's flat and its coin isn't a candidate any more, or
    - by the [risk-engine](risk-engine.md) when the paper's realized loss since it was created or last re-enabled (`enabled_at`) reaches its **loss limit** — 10% of its budget, or more for a paper whose backtest had deeper drawdowns (see [risk-engine](risk-engine.md)).
 
