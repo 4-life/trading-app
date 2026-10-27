@@ -57,7 +57,7 @@ INTERRUPTED = "interrupted - the API restarted while it ran"
 # A run is tight when its most margin locked at once left less than this
 # share of the sweep's max margin unused: live slippage and fees beyond the
 # backtest's would have liquidated it.
-MIN_HEADROOM = Decimal("0.2")
+MIN_HEADROOM = Decimal("0.1")
 
 # The sweeps running in this process (one uvicorn process); a sweep stored as
 # running but not here was cut off by a restart.
