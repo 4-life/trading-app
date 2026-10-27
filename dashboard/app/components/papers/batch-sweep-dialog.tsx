@@ -39,7 +39,7 @@ export function BatchSweepDialog({ papers }: { papers: Paper[] }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger render={<Button size="sm" variant="outline" />}>Batch sweep</DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>Batch sweep</DialogTitle>
           <DialogDescription>
@@ -61,7 +61,7 @@ export function BatchSweepDialog({ papers }: { papers: Paper[] }) {
         ) : (
           <fetcher.Form method="post" className="space-y-3">
             <input type="hidden" name="intent" value="startBatch" />
-            <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">
+            <div className="grid gap-x-4 gap-y-1 rounded-md border p-2 sm:grid-cols-3">
               {averaging.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No averaging papers</p>
               ) : (

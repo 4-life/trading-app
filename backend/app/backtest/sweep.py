@@ -473,8 +473,15 @@ async def run_jobs[J](
     loop = asyncio.get_running_loop()
     with _pool() as pool:
         futures = [loop.run_in_executor(pool, work, j) for j in jobs]
-        for future in asyncio.as_completed(futures):
-            await on_rows(await future)
+        try:
+            for future in asyncio.as_completed(futures):
+                await on_rows(await future)
+        finally:
+            # Stopped or failed: the rest are cancelled, or their errors (a
+            # broken pool) read - else asyncio logs each as never retrieved.
+            for pending in futures:
+                if not pending.cancel() and not pending.cancelled():
+                    pending.exception()
 
 
 async def run_sweep(

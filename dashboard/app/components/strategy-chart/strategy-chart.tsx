@@ -56,7 +56,7 @@ const TIMEFRAME_SECONDS: Record<string, number> = {
   '4h': 14_400,
 };
 
-const INITIAL_DAYS = 7;
+const INITIAL_HOURS = 12;
 // Older candles load ahead of the view: once it's within PRELOAD_SCREENS
 // view widths of the loaded start, the next CHUNK_SCREENS widths (CHUNK_MIN
 // to CHUNK_MAX candles) are fetched - ready before the scroll reaches them.
@@ -755,7 +755,7 @@ export default function StrategyChart({ chart }: { chart: PaperChart }) {
     } else if (last) {
       const to = sec(last.time);
       timeScale.setVisibleRange({
-        from: (to - INITIAL_DAYS * 86_400) as UTCTimestamp,
+        from: (to - INITIAL_HOURS * 3_600) as UTCTimestamp,
         to: to as UTCTimestamp,
       });
     }
