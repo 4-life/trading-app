@@ -10,7 +10,7 @@ Used for:
 - the watchdog's latest check results
 - service heartbeats (`heartbeat:<service>`) — executors and the [execution-engine](execution-engine.md#liquidation)
 
-Redis keeps **nothing on disk** (`--save "" --appendonly no`): every start begins empty. That is what turns live auto-trading off after a restart; everything else here is re-set by the services within one pass (the watchdog sets the kill switch as it starts).
+Redis keeps **nothing on disk** (`--save "" --appendonly no`): every start begins empty. That is what turns live auto-trading off after a restart (no new live entries or adds; exits go on); everything else here is re-set by the services within one pass (the watchdog sets the kill switch as it starts).
 
 Everything else — papers, positions, settings — lives in [Postgres](postgres.md).
 

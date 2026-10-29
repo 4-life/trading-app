@@ -478,8 +478,8 @@ async def run_once(strategy: Strategy) -> None:
 
     for paper in papers:
         try:
-            # Switch off: a live paper's entries and exits are logged as
-            # rejected, never placed.
+            # Switch off: a live paper's entries and adds are logged as
+            # rejected, never placed; its exits still go through.
             switched_off = paper.mode == "live" and not live_auto
             if await _has_in_flight(paper.id):
                 continue
@@ -504,16 +504,17 @@ async def run_once(strategy: Strategy) -> None:
                     signal = with_paper_levels(paper, signal, tick.price)
             if signal is None:
                 continue
+            blocked = switched_off and signal.signal != "exit"
             if signal.signal == "add":
-                if await _add_queued(paper, signal, last_buy_at, switched_off):
+                if await _add_queued(paper, signal, last_buy_at, blocked):
                     continue
-            elif await _already_queued(paper, signal, switched_off):
+            elif await _already_queued(paper, signal, blocked):
                 continue
             if signal.signal != "exit" and not await _entry_allowed(
                 strategy.name, paper, signal.direction
             ):
                 continue
-            if switched_off:
+            if blocked:
                 await reject_decision(paper, signal, tick.price, AUTO_TRADING_OFF)
                 continue
             await queue_decision(paper, signal, tick.price)

@@ -6,7 +6,7 @@ The only component that places orders. Receives orders from [strategy executors]
 
 ## Liquidation
 
-A position is force-closed (reason `liquidation`) once its remaining margin — margin + unrealized PnL — falls to `MAINTENANCE_MARGIN_PCT` (default **20%**) of its initial margin. The execution engine checks every open demo position at the start of each pass. It also writes a heartbeat to Redis every pass; if the heartbeat goes stale (`EXECUTION_HEARTBEAT_STALE_SECONDS`, default 30), the [risk-engine](risk-engine.md) runs the same liquidation in its place. Row locks make sure a position is closed once. Each liquidation is logged to the decision log (outcome `placed`) and alerted. Live positions are skipped while the dashboard's [auto-trading switch](dashboard.md#live-cards) is off.
+A position is force-closed (reason `liquidation`) once its remaining margin — margin + unrealized PnL — falls to `MAINTENANCE_MARGIN_PCT` (default **20%**) of its initial margin. The execution engine checks every open demo position at the start of each pass. It also writes a heartbeat to Redis every pass; if the heartbeat goes stale (`EXECUTION_HEARTBEAT_STALE_SECONDS`, default 30), the [risk-engine](risk-engine.md) runs the same liquidation in its place. Row locks make sure a position is closed once. Each liquidation is logged to the decision log (outcome `placed`) and alerted. Live positions too, whatever the dashboard's [auto-trading switch](dashboard.md#live-cards) says — it only gates entries and adds.
 
 ## Order Queue
 
@@ -71,7 +71,7 @@ Live requests go to the [exchange API](dashboard.md#exchange-api) selected in th
 - **Add** (averaging down) — a market order on the same side grows the isolated position; it leaves the position's leverage setting (the paper's leverage) alone, so the order itself takes margin at that leverage. The rest of the add's margin (notional ÷ `add_leverage` minus what the order took) is then moved into the isolated position: Lighter `update_margin` (add collateral), Hyperliquid `updateIsolatedMargin`. If that transfer fails, the add stays recorded at the paper's leverage, and it's alerted.
 - **Exit** — a market order on the opposite side, for the whole size or `close_fraction` of it (rounded down to the asset's size step). A partial close or partial fill reduces the position and leaves it open; the next exit signal closes the rest. Each close carries its share of the entry fees (the first entry's and every add's).
 - **Funding** is settled by the exchange on the account, not included in a position's realized PnL.
-- **Liquidation** — the [20% maintenance rule](#liquidation) applies to live positions too, priced from the exchange, before its own liquidation — only while live auto-trading is on.
+- **Liquidation** — the [20% maintenance rule](#liquidation) applies to live positions too, priced from the exchange, before its own liquidation — whatever the auto-trading switch.
 - **Closed outside the app** — a live position closed on the exchange by hand (or liquidated there) is recorded with the dashboard's **Doesn't exist** action (`POST /positions/{id}/closed-on-exchange`), at the price the owner enters.
 - **Balance** — the live total (budget allocator, risk limits, live cards) is the account value; free cash is the withdrawable (Lighter: available) amount.
 - **Reconciliation** — the [watchdog](watchdog.md#monitoring)'s `live_reconciliation` check compares open live positions in the database with the account.

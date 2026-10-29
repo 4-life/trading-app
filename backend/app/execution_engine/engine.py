@@ -32,7 +32,6 @@ from app.market_data.models import FundingRate
 from app.notifications.alerts import alert
 from app.notifications.trades import notify_order
 from app.papers.models import Paper
-from app.system.auto_open import is_auto_open_enabled
 from app.system.exchange_api import taker_fee_rate
 from app.watchdog.redis_client import set_heartbeat
 
@@ -639,14 +638,12 @@ async def _liquidate(
 async def liquidate_breached(adapter: MarketAdapter, source: str) -> None:
     """Force-closes every open position whose remaining margin is at or below
     MAINTENANCE_MARGIN_PCT of its initial margin. Demo positions are priced
-    from market data, live ones from the live exchange. Live ones
-    are skipped while the live auto-trading switch is off."""
+    from market data, live ones from the live exchange - whatever the live
+    auto-trading switch: a close, not an entry."""
     async with async_session() as session:
         positions = (
             await session.scalars(select(Position).where(Position.closed_at.is_(None)))
         ).all()
-    if not await is_auto_open_enabled():
-        positions = [p for p in positions if p.mode != "live"]
     maintenance = Decimal(str(settings.maintenance_margin_pct))
     client = await live_client() if any(p.mode == "live" for p in positions) else None
     quotes: dict[tuple[str, str], Quote] = {}

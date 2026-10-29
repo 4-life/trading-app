@@ -31,7 +31,7 @@ All API calls happen on the dashboard server (route loaders/actions), which forw
 
 Equity, Available Balance, Open Positions, Exposure, Total PnL, Unrealized PnL, Realized PnL.
 
-- Big **Auto trading** switch — whether the app places orders on its own for **live** papers: entries, exits (strategy exits, take-profits) and [maintenance-margin closes](execution-engine.md#liquidation). While it's off, live positions are left as they are — closed only by the owner (Close / Doesn't exist, or on Hyperliquid) or by Hyperliquid's own liquidation. **Off after every start** (kept in [Redis](redis.md), which keeps nothing on disk), so a restarted VPS never acts on positions the owner may have closed on Hyperliquid meanwhile. Demo papers ignore it.
+- Big **Auto trading** switch — whether the app may **open or add to** live positions on its own: entries and adds. **Exits go through whatever it says** — unwinds, take-profits, give-ups, strategy exits and [maintenance-margin closes](execution-engine.md#liquidation) — so an open position keeps selling and closing. **Off after every start** (kept in [Redis](redis.md), which keeps nothing on disk), so a restarted VPS opens nothing live until the owner turns it on. A live position already closed by hand on the exchange meanwhile: mark it **Doesn't exist** — else the app may send its exit. Demo papers ignore it.
 - Without a Hyperliquid API key or readable live balance, the cards show "no live data".
 
 ## Demo Cards
