@@ -38,24 +38,35 @@ def test_buy_on_the_close_back_over_the_lower_edge() -> None:
 
 
 def test_a_long_paper_buys_on_buy_and_closes_on_sell() -> None:
-    buy = decide_signal("long", False, buy=True, sell=False, entered_on_signal=False)
+    buy = decide_signal(None, "long", entered_on_signal=False, paper_direction="long")
     assert buy is not None and (buy.signal, buy.direction, buy.reason) == (
         "enter",
         "long",
         KELTNER_BUY,
     )
-    assert decide_signal("long", False, True, False, entered_on_signal=True) is None  # once
-    assert decide_signal("long", False, False, True, False) is None  # a sell opens no short
-    sell = decide_signal("long", True, False, True, False)
-    assert sell is not None and (sell.signal, sell.reason) == ("exit", KELTNER_SELL)
+    assert decide_signal(None, "long", True, "long") is None  # once per signal
+    assert decide_signal(None, "short", False, "long") is None  # a sell opens no short
+    sell = decide_signal("long", "short", False, "long")
+    assert sell is not None and (sell.signal, sell.direction, sell.reason) == (
+        "exit",
+        "long",
+        KELTNER_SELL,
+    )
+    assert decide_signal("long", "long", False, "long") is None
 
 
 def test_a_short_paper_sells_on_sell_and_closes_on_buy() -> None:
-    sell = decide_signal("short", False, False, True, False)
+    sell = decide_signal(None, "short", False, "short")
     assert sell is not None and (sell.signal, sell.direction) == ("enter", "short")
-    assert decide_signal("short", False, True, False, False) is None  # a buy opens no long
-    buy = decide_signal("short", True, True, False, False)
+    assert decide_signal(None, "long", False, "short") is None  # a buy opens no long
+    buy = decide_signal("short", "long", False, "short")
     assert buy is not None and (buy.signal, buy.reason) == ("exit", KELTNER_BUY)
+
+
+def test_both_enters_either_way() -> None:
+    for signal in ("long", "short"):
+        entry = decide_signal(None, signal, False, "both")
+        assert entry is not None and (entry.signal, entry.direction) == ("enter", signal)
 
 
 def _bars() -> list[Bar]:
@@ -72,3 +83,9 @@ def test_backtest_trades_from_signal_to_signal() -> None:
     )
     (short,) = backtest.simulate(bars, "short")
     assert (short.opened_at, short.exit_reason) == (bars[SPIKE + 1].time, OPEN_AT_END)
+    # Both: the Sell closes the long and opens the short on the same candle.
+    both = backtest.simulate(bars, "both")
+    assert [(t.direction, t.opened_at) for t in both] == [
+        ("long", bars[DIP + 1].time),
+        ("short", bars[SPIKE + 1].time),
+    ]

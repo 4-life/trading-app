@@ -17,6 +17,7 @@ function exitRule(p: OpenPosition): string {
 export function OpenPositionRow({ position: p }: { position: OpenPosition }) {
   return (
     <TableRow>
+      <TableCell className="text-muted-foreground">{`#${String(p.paper_id)}`}</TableCell>
       <TableCell className="uppercase">{p.mode}</TableCell>
       <TableCell className="font-medium">{p.asset}</TableCell>
       <TableCell className={`uppercase ${DIRECTION_CLASS[p.direction] ?? ""}`}>{p.direction}</TableCell>

@@ -6,10 +6,11 @@ replaces its rows in `backtest_trades`. Run after a backfill:
 
 Trades start on the given date - the whole history by default.
 
-At each signal candle's close: the paper's opening signal (Buy for a long
-paper, Sell for a short one) opens the position there, the opposite one
-closes it there. No stop-loss. Fees: the selected provider's maker fee on
-both sides, as for VWAP."""
+At each signal candle's close: a Buy opens a long there, a Sell closes it;
+a Sell opens a short, a Buy closes it - where the paper's direction allows
+(both: either - a close and the opposite entry on the same candle). No
+stop-loss. Fees: the selected provider's maker fee on both sides, as for
+VWAP."""
 
 import logging
 import sys
@@ -25,10 +26,10 @@ from app.backtest.bars import (
     with_paper_exits,
 )
 from app.backtest.models import OPEN_AT_END
-from app.executors.keltner import KELTNER_BUY, KELTNER_SELL
+from app.executors.base import direction_allowed
+from app.executors.keltner import reason
 from app.executors.keltner_signals import KeltnerSignals, keltner_signals
 from app.notifications.error_reporting import run_service
-from app.order_queue import Direction
 from app.papers.models import Paper
 
 logger = logging.getLogger(__name__)
@@ -39,53 +40,48 @@ def signals(bars: list[Bar]) -> KeltnerSignals:
 
 
 def simulate(
-    bars: list[Bar], direction: Direction = "long", start: datetime | None = None
+    bars: list[Bar], paper_direction: str = "long", start: datetime | None = None
 ) -> list[SimTrade]:
     """From `start`, one position at a time."""
     ks = signals(bars)
-    long = direction == "long"
-    opens, closes = (ks.buy, ks.sell) if long else (ks.sell, ks.buy)
-    entry, exit_ = (KELTNER_BUY, KELTNER_SELL) if long else (KELTNER_SELL, KELTNER_BUY)
     trades: list[SimTrade] = []
     pos: SimTrade | None = None
     for i, bar in enumerate(bars):
         if start is not None and bar.time < start:
             continue
-        if pos is not None and closes[i]:
-            pos.closed_at, pos.close_price, pos.exit_reason = bar.time, bar.close, exit_
+        signal = ks.at(i)
+        if signal is None:
+            continue
+        if pos is not None and pos.direction != signal:
+            pos.closed_at, pos.close_price, pos.exit_reason = bar.time, bar.close, reason(signal)
             trades.append(pos)
             pos = None
-        elif pos is None and opens[i]:
-            pos = SimTrade(direction, bar.time, bar.close, None, entry_reason=entry)
+        if pos is None and direction_allowed(paper_direction, signal):
+            pos = SimTrade(signal, bar.time, bar.close, None, entry_reason=reason(signal))
     if pos is not None and bars:
         pos.closed_at, pos.close_price, pos.exit_reason = bars[-1].time, bars[-1].close, OPEN_AT_END
         trades.append(pos)
     return trades
 
 
-def _direction(paper: Paper) -> Direction:
-    return "long" if paper.direction == "long" else "short"
-
-
 def simulate_paper(paper: Paper, bars: list[Bar], start: datetime | None = None) -> list[SimTrade]:
     """The strategy's own trades over `bars` - its backtest without saving
     (also the entry signals of an averaging paper's backtest) - cut at the
     paper's own stop-loss / take-profit, if it has them."""
-    return with_paper_exits(simulate(bars, _direction(paper), start), bars, *paper_exits(paper))
+    return with_paper_exits(simulate(bars, paper.direction, start), bars, *paper_exits(paper))
 
 
 def entry_signals(paper: Paper, bars: list[Bar]) -> list[SimTrade]:
     """Every candle the strategy signals an entry on in the paper's direction
-    - an entry when flat, held or not (an averaging paper's entries and
-    signal adds)."""
-    direction = _direction(paper)
+    (both: either) - an entry when flat, held or not (an averaging paper's
+    entries and signal adds)."""
     ks = signals(bars)
-    opens, reason = (ks.buy, KELTNER_BUY) if direction == "long" else (ks.sell, KELTNER_SELL)
-    return [
-        SimTrade(direction, bar.time, bar.close, None, entry_reason=reason)
-        for i, bar in enumerate(bars)
-        if opens[i]
-    ]
+    out: list[SimTrade] = []
+    for i, bar in enumerate(bars):
+        signal = ks.at(i)
+        if signal is not None and direction_allowed(paper.direction, signal):
+            out.append(SimTrade(signal, bar.time, bar.close, None, entry_reason=reason(signal)))
+    return out
 
 
 async def backtest_paper(paper: Paper, start: datetime | None) -> list[SimTrade]:

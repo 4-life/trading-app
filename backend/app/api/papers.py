@@ -62,7 +62,7 @@ _EXECUTOR_DIRECTIONS: dict[str, tuple[str, ...]] = {
     "trend": ("long", "short", "both"),
     "vwap": ("long", "both"),  # docs/vwap-strategy-engine.md
     "supertrend": ("long", "short"),  # no both (docs/supertrend-strategy-engine.md)
-    "keltner": ("long", "short"),  # no both (docs/keltner-strategy-engine.md)
+    "keltner": ("long", "short", "both"),
     "regime": ("long", "short", "both"),
 }
 # Executors that can run as a scanner paper (docs/papers.md#kinds).

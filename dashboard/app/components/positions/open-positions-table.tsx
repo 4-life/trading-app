@@ -4,6 +4,7 @@ import type { OpenPosition } from "@/types/portfolio";
 import { OpenPositionRow } from "./open-position-row";
 
 const COLUMNS = [
+  "Paper",
   "Type",
   "Asset",
   "Dir",

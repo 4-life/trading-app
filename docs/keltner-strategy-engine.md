@@ -1,8 +1,8 @@
 # Keltner Strategy
 
-A [strategy executor](strategy-executor.md) on the Buy / Sell of the "Keltner Channel signals" TradingView indicator: a **long** paper buys on a Buy and closes on a Sell, a **short** paper sells on a Sell and closes on a Buy. No stop-loss, no take-profit.
+A [strategy executor](strategy-executor.md) on the Buy / Sell of the "Keltner Channel signals" TradingView indicator: a Buy opens a **long** and a Sell closes it; a Sell opens a **short** and a Buy closes it — where the paper's direction allows. No stop-loss, no take-profit.
 
-Docker service: `keltner-executor` (`python -m app.executors.keltner`), executor name `keltner`. Directions: **long** or **short** — no both.
+Docker service: `keltner-executor` (`python -m app.executors.keltner`), executor name `keltner`. Directions: **long**, **short** or **both** (either; a close and the opposite entry can fall on the same candle).
 
 ## Signals
 
@@ -16,8 +16,8 @@ The indicator's ATR channel and WaveTrend only draw — they make no signals and
 
 | Event on the last closed candle | Flat | Long open | Short open |
 |---|---|---|---|
-| **Buy** | long paper: open **long** (`keltner_buy`) | — | close (`keltner_buy`) |
-| **Sell** | short paper: open **short** (`keltner_sell`) | close (`keltner_sell`) | — |
+| **Buy** | long / both paper: open **long** (`keltner_buy`) | — | close (`keltner_buy`) |
+| **Sell** | short / both paper: open **short** (`keltner_sell`) | close (`keltner_sell`) | — |
 
 - **One entry per signal candle**; signals are checked on candle closes.
 - No stop-loss and no take-profit — the opposite signal is the only exit.
@@ -34,9 +34,9 @@ A Keltner paper's [strategy chart](dashboard.md#strategy-chart) draws the signal
 docker compose -f docker/local/compose.yaml exec keltner-executor python -m app.backtest.keltner [YYYY-MM-DD]
 ```
 
-- At each signal candle's close: the opening signal opens the position there, the closing one closes it there.
+- At each signal candle's close: the opening signal opens the position there, the closing one closes it there (both: the opposite entry opens on the same candle).
 - `return_pct` — net of both maker fees of the selected provider, as for VWAP; a position still open on the last candle isn't stored.
-- An [averaging](papers.md#averaging-papers) paper takes its entries, sells and signal adds from the Buys (long) or Sells (short).
+- An [averaging](papers.md#averaging-papers) paper takes its entries, sells and signal adds from the Buys (long), the Sells (short) or both — each position the direction of its entry.
 
 ---
 [← Back to README](../README.md)

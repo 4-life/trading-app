@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from math import sqrt
 
 from app.executors.vwap_signals import ema
+from app.order_queue import Direction
 
 LENGTH = 34
 DEVIATION = 2.0
@@ -27,6 +28,10 @@ class KeltnerSignals:
 
     buy: list[bool]  # the support moved at this close
     sell: list[bool]  # the resistance moved at this close
+
+    def at(self, i: int) -> Direction | None:
+        """Candle `i`'s signal: long (Buy), short (Sell), None."""
+        return "long" if self.buy[i] else "short" if self.sell[i] else None
 
 
 def percent_b(

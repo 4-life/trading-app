@@ -9,7 +9,7 @@ Each executor is a dedicated, hardcoded strategy. Strategies are replaceable com
 - [Trend](trend-strategy-engine.md) — 20-day breakout ridden with a 3 × ATR trailing stop under a 1% stop-loss (1m candles); shorts only in a BTC bear phase.
 - [VWAP + EMA9](vwap-strategy-engine.md) — a close moving above both the daily VWAP and EMA 9 opens a long, below both closes it (and, with direction both, opens a short; a BUY closes that). No stop-loss. Long / both.
 - [Supertrend](supertrend-strategy-engine.md) — the Supertrend on the Trendlines with Breaks: a long paper buys on a Buy of the one on the lower line and closes on its Sell, a short paper sells on a Sell of the one on the upper line and closes on its Buy. No stop-loss, no take-profit. Long / short.
-- [Keltner](keltner-strategy-engine.md) — the Keltner Channel signals: a long paper buys on a Buy and closes on a Sell, a short paper sells on a Sell and closes on a Buy. No stop-loss, no take-profit. Long / short.
+- [Keltner](keltner-strategy-engine.md) — the Keltner Channel signals: a Buy opens a long and a Sell closes it, a Sell opens a short and a Buy closes it. No stop-loss, no take-profit. Long / short / both.
 - [Regime](regime-strategy-engine.md) — holds the trend: a BigBeluga trend-band flip opens the position, the opposite flip closes it; a short closes at the bottom (a confirmed HH) where a long takes over (stop under the sell-off's low, re-bought at new 4h LLs after a false bottom); a long also closes on a rejection at the last 4h HH or a new 4h LL; 10% disaster stop. Meant for 2–3×.
 
 ## Responsibilities

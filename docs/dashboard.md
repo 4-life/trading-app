@@ -48,6 +48,7 @@ Open and closed positions.
 
 | Column | |
 |---|---|
+| Paper | the paper's id (open positions) |
 | Type | live / demo |
 | Asset | |
 | Dir | long / short |
