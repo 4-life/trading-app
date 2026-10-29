@@ -33,6 +33,7 @@ from itertools import product
 
 from app.backtest.averaging import (
     ENTRY_SIGNALS,
+    EXIT_SIGNALS,
     LIQUIDATION_EXIT,
     STRATEGY_TRADES,
     AveragingTrade,
@@ -115,6 +116,7 @@ class PaperJob:
     bars: list[Bar]
     trades: list[SimTrade]
     signals: list[SimTrade]
+    exits: list[SimTrade] | None  # EXIT_SIGNALS; None: the trades' exits
     rules: Rules  # the paper's, at this leverage
     fee_rate: float
     start: datetime
@@ -144,7 +146,9 @@ def run_paper(job: PaperJob) -> list[dict[str, object]]:
             reopen=reopen,
             compound=compound,
         )
-        result = simulate(job.bars, job.trades, rules, job.fee_rate, job.start, job.signals)
+        result = simulate(
+            job.bars, job.trades, rules, job.fee_rate, job.start, job.signals, job.exits
+        )
         whole = _part(result, "all")
         drained = drained_at(result, rules)
         if probe is None:  # the same for every take-profit, mode and compounding
@@ -319,12 +323,12 @@ def _inputs(
     timeframe: str,
     bars: list[Bar],
     start: datetime | None,
-) -> tuple[list[SimTrade], list[SimTrade], list[float]]:
+) -> tuple[list[SimTrade], list[SimTrade], list[SimTrade] | None, list[float]]:
     """strategy_inputs and its entries' moves from `start` (entry_moves) -
     in a worker process (plan_sweep)."""
-    trades, signals = strategy_inputs(executor, asset, direction, timeframe, bars, start)
+    trades, signals, exits = strategy_inputs(executor, asset, direction, timeframe, bars, start)
     entries = [e for e in (*trades, *signals) if start is None or e.opened_at >= start]
-    return trades, signals, entry_moves(bars, entries)
+    return trades, signals, exits, entry_moves(bars, entries)
 
 
 class SweepError(Exception):
@@ -338,11 +342,17 @@ def strategy_inputs(
     timeframe: str,
     bars: list[Bar],
     start: datetime | None = None,
-) -> tuple[list[SimTrade], list[SimTrade]]:
-    """The strategy's trades from `start` and its long signals over `bars` -
-    in a worker process (sweep_paper)."""
+) -> tuple[list[SimTrade], list[SimTrade], list[SimTrade] | None]:
+    """The strategy's trades from `start`, its long signals and its exits
+    (EXIT_SIGNALS, None without) over `bars` - in a worker process
+    (sweep_paper)."""
     paper = Paper(executor=executor, asset=asset, direction=direction, timeframe=timeframe)
-    return STRATEGY_TRADES[executor](paper, bars, start), ENTRY_SIGNALS[executor](paper, bars)
+    exits_of = EXIT_SIGNALS.get(executor)
+    return (
+        STRATEGY_TRADES[executor](paper, bars, start),
+        ENTRY_SIGNALS[executor](paper, bars),
+        None if exits_of is None else exits_of(paper, bars),
+    )
 
 
 def check_sweepable(paper: Paper) -> None:
@@ -393,7 +403,7 @@ async def plan_sweep(
     # runs this: its other requests mustn't wait.
     loop = asyncio.get_running_loop()
     with _pool(max_workers=1) as pool:
-        trades, signals, moves = await loop.run_in_executor(
+        trades, signals, exits, moves = await loop.run_in_executor(
             pool,
             _inputs,
             paper.executor,
@@ -426,6 +436,7 @@ async def plan_sweep(
             bars,
             trades,
             signals,
+            exits,
             replace(base, leverage=leverage),
             fee_rate,
             start,

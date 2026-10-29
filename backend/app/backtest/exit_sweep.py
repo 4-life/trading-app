@@ -153,7 +153,7 @@ async def plan_exit_sweep(paper: Paper, max_leverage: float | None = None) -> Ex
     split = start + (end - start) * SPLIT
     loop = asyncio.get_running_loop()
     with _pool(max_workers=1) as pool:
-        trades, _ = await loop.run_in_executor(
+        trades, _, _ = await loop.run_in_executor(
             pool,
             strategy_inputs,
             paper.executor,

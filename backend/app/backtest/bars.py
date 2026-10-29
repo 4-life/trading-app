@@ -64,6 +64,12 @@ class SimTrade:
         return ((move if self.direction == "long" else -move) - fees) * 100
 
 
+def exit_at(held: str, bar: Bar, reason: str) -> SimTrade:
+    """A strategy exit of a `held` position at `bar`'s close - an averaging
+    paper's sell signal (its executor's exit_signals)."""
+    return SimTrade(held, bar.time, bar.close, None, bar.time, bar.close, reason)
+
+
 def paper_exits(paper: Paper) -> tuple[float | None, float | None]:
     """A paper's own stop-loss and take-profit as floats (None: not set)."""
     sl, tp = paper.stop_loss_pct, paper.price_take_profit_pct

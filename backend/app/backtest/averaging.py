@@ -1,8 +1,9 @@
 """Temporary averaging-paper backtest (docs/papers.md#averaging-papers): the
 paper's executor gives the entries and the sell signals - the long entries
-and exits of its own backtest, replayed without saving, plus every candle
-it signals a long on while its own trade is open (as live asks it on every
-candle) - and the paper's
+of its own backtest, replayed without saving, plus every candle it signals
+a long on while its own trade is open, and every candle it signals an exit
+on, its own trade open or not (EXIT_SIGNALS; Regime: its trades' exits) -
+as live asks it on every candle - and the paper's
 averaging rules manage each position candle by candle. Replaces the
 paper's rows in `backtest_trades`, one per position. Run after a backfill:
 
@@ -111,6 +112,14 @@ ENTRY_SIGNALS: dict[str, Callable[[Paper, list[Bar]], list[SimTrade]]] = {
     "supertrend": supertrend.entry_signals,
     "keltner": keltner.entry_signals,
     "regime": regime.entry_signals,
+}
+# Every candle a strategy closes a held position on, its own trade held or
+# not - the sells, as live asks it on every candle. Regime's exits depend on
+# the position (its stops), not on a candle: its sells are its trades' exits.
+EXIT_SIGNALS: dict[str, Callable[[Paper, list[Bar]], list[SimTrade]]] = {
+    "vwap": vwap.exit_signals,
+    "supertrend": supertrend.exit_signals,
+    "keltner": keltner.exit_signals,
 }
 
 
@@ -416,11 +425,13 @@ def simulate(
     fee_rate: float = 0.0,
     start: datetime | None = None,
     signals_held: Sequence[SimTrade] = (),
+    exits: Sequence[SimTrade] | None = None,
 ) -> list[AveragingTrade]:
     """From `start`, one position at a time; `entries`: the strategy's
     trades - their long entries open the positions, their exits are the
-    sell signals; `signals_held`: its long signals on any candle (its own
-    trade held or not) - entries and signal adds too."""
+    sell signals unless `exits` is given; `signals_held`: its long signals
+    on any candle (its own trade held or not) - entries and signal adds too;
+    `exits`: its exits on any candle (EXIT_SIGNALS) - the sell signals."""
     directions = rules.directions
     signals: dict[str, dict[datetime, SimTrade]] = {d: {} for d in directions}
     sells: dict[str, dict[datetime, SimTrade]] = {d: {} for d in directions}
@@ -430,8 +441,11 @@ def simulate(
     for t in entries:
         if t.direction in signals:
             signals[t.direction].setdefault(t.opened_at, t)
-            if t.closed_at is not None and t.exit_reason != OPEN_AT_END:
+            if exits is None and t.closed_at is not None and t.exit_reason != OPEN_AT_END:
                 sells[t.direction].setdefault(t.closed_at, t)
+    for t in exits or ():
+        if t.direction in sells and t.closed_at is not None:
+            sells[t.direction].setdefault(t.closed_at, t)
     # Reopening after an intraday take-profit: where the strategy's trend lasts.
     reopening = rules.intraday and rules.reopen
     trend = {d: in_trend(bars, entries, d) if reopening else set() for d in directions}
@@ -552,6 +566,7 @@ async def backtest_paper(paper: Paper, start: datetime | None) -> list[Averaging
     rules = rules_of(paper, await market_limits(paper.asset))
     start = start or paper.backtest_start
     signals_of = ENTRY_SIGNALS.get(paper.executor)
+    exits_of = EXIT_SIGNALS.get(paper.executor)
     fee_rate = float(await maker_fee_rate())
     simulated = simulate(
         bars,
@@ -560,6 +575,7 @@ async def backtest_paper(paper: Paper, start: datetime | None) -> list[Averaging
         fee_rate,
         start,
         signals_of(paper, bars) if signals_of is not None else [],
+        exits_of(paper, bars) if exits_of is not None else None,
     )
     # A position still open on the last candle is stored too (`open_at_end`, at
     # the last close - unrealized); the totals count the closed ones.

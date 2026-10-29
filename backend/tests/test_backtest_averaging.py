@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.backtest.averaging import Rules, in_trend, simulate, states_after
-from app.backtest.bars import Bar, Fill, SimTrade
+from app.backtest.bars import Bar, Fill, SimTrade, exit_at
 from app.backtest.sweep import (
     adverse_move,
     drained_at,
@@ -292,6 +292,23 @@ def test_a_signal_while_the_strategys_own_trade_is_open_still_adds() -> None:
     signal = _entry(30, bars[30].close)
     [t] = simulate(bars, [trade], PLAN_F, signals_held=[signal])
     assert [f.time for f in t.fills][:2] == [T0 + timedelta(hours=20), T0 + timedelta(hours=30)]
+
+
+def test_a_sell_after_the_strategys_own_trade_closed_still_closes_it_as_live() -> None:
+    # $100 at 100 on $10, TP 30% ($3): the strategy's trade sells at a loss
+    # at 1 and is flat after; its next sell, at 3 (104), closes the position.
+    bars = _bars(
+        (100, 100, 100, 100),
+        (100, 100, 99, 99),
+        (99, 100, 99, 100),
+        (100, 104, 100, 104),
+        (104, 104, 104, 104),
+    )
+    trade = _entry(0, sell_at=(1, 99))
+    exits = [exit_at("long", bars[1], "keltner_sell"), exit_at("long", bars[3], "keltner_sell")]
+    [t] = simulate(bars, [trade], PLAN_F, exits=exits)
+    assert t.closed_at == bars[3].time
+    assert (t.exit_reason, t.close_price) == (f"{TAKE_PROFIT_EXIT}:keltner_sell", 104)
 
 
 def test_the_max_margin_caps_every_position_wins_banked_and_a_give_up_doesnt_end_it() -> None:

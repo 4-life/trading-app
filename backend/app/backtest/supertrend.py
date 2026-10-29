@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from app.backtest.bars import (
     Bar,
     SimTrade,
+    exit_at,
     load_bars,
     paper_exits,
     save_trades,
@@ -82,6 +83,17 @@ def entry_signals(paper: Paper, bars: list[Bar]) -> list[SimTrade]:
         for i, bar in enumerate(bars)
         if opens[i]
     ]
+
+
+def exit_signals(paper: Paper, bars: list[Bar]) -> list[SimTrade]:
+    """Every candle the strategy closes a held position on, its own trade
+    held or not - as live: its closing signal (an averaging paper's sell
+    signals)."""
+    direction = _direction(paper)
+    st = signals([b.high for b in bars], [b.low for b in bars], [b.close for b in bars], direction)
+    long = direction == "long"
+    closes, reason = (st.sell, SUPERTREND_SELL) if long else (st.buy, SUPERTREND_BUY)
+    return [exit_at(direction, bar, reason) for i, bar in enumerate(bars) if closes[i]]
 
 
 async def backtest_paper(paper: Paper, start: datetime | None) -> list[SimTrade]:
