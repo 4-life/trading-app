@@ -51,12 +51,13 @@ def test_an_add_at_half_the_margin_lost_then_the_sell_above_the_take_profit() ->
     assert t.adds == 1
     assert t.margin == 20
     # Its fills for the chart: the first entry, the add at its level - the
-    # lowest unit, kept to the close - and the first entry sold back in profit
-    # on the way up (its price + 0.4%), before the strategy's sell.
+    # lowest unit, kept to the close - and the first entry, the highest unit,
+    # sold on the way up half the way from 95 above it (102.5), before the
+    # strategy's sell.
     assert [(f.side, f.time, f.price) for f in t.fills] == [
         ("buy", T0, 100),
         ("buy", T0 + timedelta(hours=1), 95),
-        ("sell", T0 + timedelta(hours=2), pytest.approx(100.4)),
+        ("sell", T0 + timedelta(hours=2), pytest.approx(102.5)),
     ]
     # $100 at 100 and $30 at 95: the next add would be at ~90.7, not reached.
     assert t.entry_price == pytest.approx(130 / (1 + 30 / 95))
@@ -72,12 +73,12 @@ def test_a_short_is_the_long_mirrored() -> None:
     assert t.adds == 1
     assert t.margin == 20
     # The first sell, the add at its level - the highest unit, kept to the
-    # close - and the first sell bought back in profit on the way down (its
-    # price - 0.4%), before the strategy's exit.
+    # close - and the first sell bought back on the way down half the way from
+    # 105 below it (97.5), before the strategy's exit.
     assert [(f.side, f.time, f.price) for f in t.fills] == [
         ("buy", T0, 100),
         ("buy", T0 + timedelta(hours=1), 105),
-        ("sell", T0 + timedelta(hours=2), pytest.approx(99.6)),
+        ("sell", T0 + timedelta(hours=2), pytest.approx(97.5)),
     ]
     assert t.entry_price == pytest.approx(130 / (1 + 30 / 105))
     assert (t.exit_reason, t.close_price) == (f"{TAKE_PROFIT_EXIT}:hh_rejection", 70)
@@ -190,7 +191,7 @@ def test_every_strategy_entry_signal_adds_to_the_open_position() -> None:
     # Entered at 108 (candle 20); the strategy signals again on candles 30 and 35.
     entries = [_entry(20, 108), _entry(30, bars[30].close), _entry(35, bars[35].close)]
     [t] = simulate(bars, entries, PLAN_F)
-    assert [(f.time, f.price) for f in t.fills] == [
+    assert [(f.time, f.price) for f in t.fills if f.side == "buy"] == [
         (T0 + timedelta(hours=20), 108),
         (T0 + timedelta(hours=30), bars[30].close),
         (T0 + timedelta(hours=35), bars[35].close),
@@ -198,25 +199,38 @@ def test_every_strategy_entry_signal_adds_to_the_open_position() -> None:
     assert t.fills[1].notional == 100  # sized like the first entry: $10 at 10x
 
 
-def test_each_unit_but_the_lowest_is_sold_at_its_own_price_plus_the_markup() -> None:
+def test_each_unit_but_the_lowest_is_sold_at_the_next_higher_units_price() -> None:
     # $100 at 100, $30 adds at 95 and ~91.2, then back to 101.
     bars = _bars((100, 100, 100, 100), (100, 100, 91, 92), (92, 101, 92, 100), (100, 100, 99, 99))
     [t] = simulate(bars, [_entry(0)], PLAN_F)
-    assert [f.side for f in t.fills] == ["buy", "buy", "buy", "sell", "sell"]
+    assert [f.side for f in t.fills] == ["buy", "buy", "buy", "sell"]
     lowest = t.fills[2].price
-    # The 95 unit, then the first buy, each at its own price + 0.4% (the
-    # markup; no fees here); the lowest kept.
+    # The 95 unit at the first buy's price; the first buy, now the highest, waits
+    # for half the way from the lowest above it (~104.4); the lowest kept.
     prices = [f.price for f in t.fills]
-    assert prices == [100, 95, lowest, pytest.approx(95.38), pytest.approx(100.4)]
-    assert t.fills[3].notional == pytest.approx(30 / 95 * 95.38)
-    assert t.fills[3].pnl == pytest.approx(30 / 95 * (95.38 - 95))  # its unit's profit
+    assert prices == [100, 95, lowest, 100]
+    assert t.fills[3].notional == pytest.approx(30 / 95 * 100)
+    assert t.fills[3].pnl == pytest.approx(30 / 95 * (100 - 95))  # its unit's profit
     size = 1 + 30 / 95 + 30 / lowest
     assert t.fills[3].margin == pytest.approx(30 * (30 / 95) / size)  # its share of the margin
     assert t.adds == 2 and t.margin == 30  # all the margin put in
-    # Held to the end at 99: the lowest only; PnL = sold + held, at the average.
+    # Held to the end at 99: the first buy and the lowest; PnL = sold + held, at the average.
     average = 160 / size
-    sold = 30 / 95 * (95.38 - average) + 1 * (100.4 - average)
-    assert t.pnl_usd == pytest.approx(sold + 30 / lowest * (99 - average))
+    sold = 30 / 95 * (100 - average)
+    assert t.pnl_usd == pytest.approx(sold + (1 + 30 / lowest) * (99 - average))
+
+
+def test_a_signal_add_above_the_first_buy_is_a_unit_too() -> None:
+    # In at 100, a signal add at 105: the highest unit, sold half the way from
+    # 100 above it (107.5) - not held to the take-profit.
+    bars = _bars((100, 100, 100, 100), (100, 105, 100, 105), (105, 108, 105, 107))
+    [t] = simulate(bars, [_entry(0), _entry(1, 105)], PLAN_F)
+    assert [(f.side, f.price) for f in t.fills] == [
+        ("buy", 100),
+        ("buy", 105),
+        ("sell", pytest.approx(107.5)),
+    ]
+    assert t.fills[2].pnl == pytest.approx(100 / 105 * 2.5)
 
 
 def test_the_position_after_an_unwind() -> None:
@@ -225,27 +239,6 @@ def test_the_position_after_an_unwind() -> None:
     size = 1 + 30 / 95
     assert after.margin == pytest.approx(20 * (1 - (30 / 95) / size))
     assert after.entry == pytest.approx(130 / size)  # an unwind doesn't move the average
-
-
-def test_with_three_dip_units_a_bounce_sells_the_two_above_the_lowest_together() -> None:
-    down = _bars((100, 100, 100, 100), (100, 100, 85, 86))
-    [deep] = simulate(down, [_entry(0)], PLAN_F)
-    *_, third, second, _lowest = [f.price for f in deep.fills]
-    assert len(deep.fills) - 1 >= 3  # 3 dip units or more: pairs
-    # The second-lowest unit's own price + 0.4% isn't enough any more: held.
-    early = _bars((100, 100, 100, 100), (100, 100, 85, 86), (86, second * 1.004, 86, 86))
-    [t] = simulate(early, [_entry(0)], PLAN_F)
-    assert not [f for f in t.fills if f.side == "sell"]
-    # Up to the pair's higher unit (+0.4%): both sold in one fill, the lowest kept.
-    level = third * 1.004
-    bounce = _bars((100, 100, 100, 100), (100, 100, 85, 86), (86, level, 86, level - 0.1))
-    [t] = simulate(bounce, [_entry(0)], PLAN_F)
-    sells = [f for f in t.fills if f.side == "sell"]
-    assert [f.price for f in sells] == [pytest.approx(level)]
-    size = 10 * 3 / second + 10 * 3 / third  # each $10 at 3x
-    assert sells[0].notional == pytest.approx(size * level)
-    profit = 10 * 3 / second * (level - second) + 10 * 3 / third * (level - third)
-    assert sells[0].pnl == pytest.approx(profit)
 
 
 def test_adds_stop_at_the_max_margin_and_the_position_gives_up_before_liquidation() -> None:
@@ -268,9 +261,9 @@ def test_adds_stop_at_the_max_margin_and_the_position_gives_up_before_liquidatio
 
 
 def test_the_margin_is_the_peak_locked_at_once_not_every_rebuy_summed() -> None:
-    # $10 adds at 95 and ~91.2, the 95 one and the first buy sold back on the
-    # way to 101 (releasing their share by size), then the next dip adds $10
-    # again: $40 put in, $30 the most locked at once.
+    # $10 adds at 95 and ~91.2, the 95 one sold back on the way to 101
+    # (releasing its share by size), then the next dip adds $10 again: $40 put
+    # in, $40 less the share released the most locked at once.
     bars = _bars(
         (100, 100, 100, 100),
         (100, 100, 91, 92),
@@ -278,8 +271,8 @@ def test_the_margin_is_the_peak_locked_at_once_not_every_rebuy_summed() -> None:
         (100, 100, 88, 89),
     )
     [t] = simulate(bars, [_entry(0)], PLAN_F)
-    assert [f.side for f in t.fills] == ["buy", "buy", "buy", "sell", "sell", "buy"]
-    assert t.margin == pytest.approx(30)
+    assert [f.side for f in t.fills] == ["buy", "buy", "buy", "sell", "buy"]
+    assert t.margin == pytest.approx(40 - t.fills[3].margin)
 
 
 def test_an_intraday_paper_takes_profit_at_once_and_keeps_going() -> None:

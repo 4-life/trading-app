@@ -3,6 +3,7 @@ shared by every executor through the executor loop: averaging down, a
 max-drawdown give-up, and the take-profit floor under the strategy's sell
 signals, from the paper's own parameters. Pure - prices in, a signal out."""
 
+from collections.abc import Iterable
 from decimal import Decimal
 
 from app.config import settings
@@ -23,11 +24,11 @@ SIGNAL_ADD = "signal_add"
 # of the candle its take-profit hit on, while the strategy's own trade (its
 # trend) is still open there.
 REOPEN_IN_TREND = "reopen_in_trend"
-# A dip unit sold (a partial close) at the level of the add above it - never
-# the lowest one held: it's kept to the position's close.
+# A unit sold (a partial close) at the next-higher unit's price (unwind_level)
+# - never the lowest one held: it's kept to the position's close.
 UNWIND_EXIT = "unwind_adds"
-# A unit is sold this far above its level - its slippage and a small gain on
-# top of what it covers - plus both fees.
+# A unit is sold at least this far above its own price - its slippage and a
+# small gain on top of what it covers - plus both fees.
 UNWIND_MARKUP = Decimal("0.004")
 # An averaging paper adds a unit once its loss has taken this share of the
 # margin put in - halfway to the margin call (MAINTENANCE_MARGIN_PCT, 20% left).
@@ -128,66 +129,75 @@ def take_profit_sell(
     return Signal("exit", sell.direction, f"{TAKE_PROFIT_EXIT}:{sell.reason}")
 
 
-Lot = tuple[Decimal, Decimal]  # a dip unit still held: (buy price, size)
+# A unit of the grid: (buy price, size) - Decimal live, float in the backtest.
 
 
-def held_lots(
-    direction: Direction, first_buy: Decimal, fills: list[tuple[str, Decimal, Decimal]]
-) -> list[Lot]:
-    """The dip units still held, from the position's fills after its first buy
-    (oldest first, as (side, price, size)): every buy under the first buy's
-    price is a unit; every sell (an unwind) took the lowest one but the
-    lowest (_unwound: a short, mirrored). Buys above it (signal adds above
-    the start) aren't units."""
-    sign = 1 if direction == "long" else -1
-    lots: list[Lot] = []
+def held_units[N: (float, Decimal)](
+    sign: int, fills: Iterable[tuple[str, N, N]]
+) -> list[tuple[N, N]]:
+    """The units still held, from the position's fills (oldest first, as
+    (side, price, size)): every buy is a unit - the first, every dip add and
+    signal add; every sell (an unwind) sold the one unwound_unit picks.
+    `sign`: 1 a long, -1 a short."""
+    units: list[tuple[N, N]] = []
     for side, price, size in fills:
         if side == "sell":
-            lot = _unwound(sign, lots)
-            if lot is not None:
-                lots.remove(lot)
-        elif sign * (first_buy - price) > 0:
-            lots.append((price, size))
-    return lots
+            unit = unwound_unit(sign, units)
+            if unit is not None:
+                units.remove(unit)
+        else:
+            units.append((price, size))
+    return units
 
 
-def _unwound(sign: int, lots: list[Lot]) -> Lot | None:
-    """The unit an unwind sells: the lowest one but the lowest - kept to the
+def unwound_unit[N: (float, Decimal)](sign: int, units: list[tuple[N, N]]) -> tuple[N, N] | None:
+    """The unit the next unwind sells: the lowest but the lowest - kept to the
     position's close (a short: mirrored); None with fewer than two."""
-    if len(lots) < 2:
+    if len(units) < 2:
         return None
-    return sorted(lots, key=lambda lot: sign * lot[0])[1]
+    return sorted(units, key=lambda unit: sign * unit[0])[1]
+
+
+def unwind_level[N: (float, Decimal)](sign: int, units: list[tuple[N, N]], buffer: N) -> N | None:
+    """The price the next unwind sells at: the next-higher unit's buy price;
+    the highest unit's, half the way from the lowest above it - never under
+    its own price plus `buffer` (unwind_buffer: its fees, slippage, a gain),
+    so no sale loses. None with nothing to sell. A short: mirrored."""
+    unit = unwound_unit(sign, units)
+    if unit is None:
+        return None
+    price = unit[0]
+    above = [p for p, _ in units if sign * p > sign * price]
+    if above:
+        level = min(above, key=lambda p: sign * p)
+    else:
+        lowest = min((p for p, _ in units), key=lambda p: sign * p)
+        level = price + (price - lowest) / 2
+    floor = price * (1 + sign * buffer)
+    return max(level, floor, key=lambda p: sign * p)
 
 
 def unwind_buffer(fee_rate: Decimal) -> Decimal:
-    """How far above its level a unit is sold: UNWIND_MARKUP plus the fee
-    of both its buy and its sell (`fee_rate`: per side)."""
+    """How far above its own price a unit is sold at least: UNWIND_MARKUP
+    plus the fee of both its buy and its sell (`fee_rate`: per side)."""
     return UNWIND_MARKUP + 2 * fee_rate
 
 
 def next_unwind(
     direction: Direction,
     price: Decimal,
-    first_buy: Decimal,
-    lots: list[Lot],
+    units: list[tuple[Decimal, Decimal]],
     size: Decimal,
     buffer: Decimal,
 ) -> Signal | None:
-    """The lowest dip unit but the lowest (_unwound - the lowest is kept to
-    the position's close) is sold once the price is back at the level of the
-    add above it - the next-higher unit's buy price, the first buy's for the
-    highest one - plus `buffer` (unwind_buffer: its fees, slippage, a gain); its
-    share of the position's `size` (a short: mirrored)."""
+    """The next unwind (unwound_unit, at unwind_level) once `price` is there:
+    its unit's share of the position's `size`."""
     sign = 1 if direction == "long" else -1
-    lot = _unwound(sign, lots)
-    if lot is None:
+    unit = unwound_unit(sign, units)
+    level = unwind_level(sign, units, buffer)
+    if unit is None or level is None or sign * (price - level) < 0:
         return None
-    above = [p for p, _ in lots if sign * p > sign * lot[0]] + [first_buy]
-    # The next unit's level, plus the buffer in the position's favour.
-    level = min(above, key=lambda p: sign * p) * (1 + sign * buffer)
-    if sign * (price - level) < 0:
-        return None
-    return Signal("exit", direction, UNWIND_EXIT, close_fraction=min(lot[1] / size, Decimal(1)))
+    return Signal("exit", direction, UNWIND_EXIT, close_fraction=min(unit[1] / size, Decimal(1)))
 
 
 def signal_add(entry: Signal | None, direction: Direction) -> Signal | None:

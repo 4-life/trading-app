@@ -26,8 +26,7 @@ from app.executors.position_management import (
     REOPEN_IN_TREND,
     SIGNAL_ADD,
     TAKE_PROFIT_EXIT,
-    Lot,
-    held_lots,
+    held_units,
     managed_signal,
     next_unwind,
     signal_add,
@@ -270,9 +269,9 @@ async def _buys(position: Position) -> list[tuple[datetime, Decimal, Decimal]]:
         return [(at, Decimal(price), Decimal(size)) for at, price, size in rows.all()]
 
 
-async def _lots(position: Position, first_buy: Decimal) -> list[Lot]:
-    """The position's dip units still held, from its filled orders after the
-    first buy - buys and partial closes (unwinds), oldest first."""
+async def _units(position: Position) -> list[tuple[Decimal, Decimal]]:
+    """The position's units still held (held_units), from its filled orders -
+    buys and partial closes (unwinds), oldest first."""
     async with async_session() as session:
         rows = await session.execute(
             select(Order.side, Order.fill_price, Order.size)
@@ -283,9 +282,8 @@ async def _lots(position: Position, first_buy: Decimal) -> list[Lot]:
     fills = [
         ("buy" if side == opening else "sell", Decimal(price), Decimal(size))
         for side, price, size in rows.all()
-    ][1:]  # after the first buy
-    direction: Direction = "long" if position.direction == "long" else "short"
-    return held_lots(direction, first_buy, fills)
+    ]
+    return held_units(1 if position.direction == "long" else -1, fills)
 
 
 async def _averaging(
@@ -293,8 +291,8 @@ async def _averaging(
 ) -> tuple[Signal | None, datetime | None]:
     """An averaging paper's open position (docs/papers.md#averaging-papers) at
     the latest trade price: its give-up or next add, else selling its lowest
-    dip unit but the lowest (kept to the close) at the level of the add
-    above it, else its take-profit - an
+    unit but the lowest (kept to the close) at the next-higher unit's price
+    (unwind_level), else its take-profit - an
     intraday paper's at once, otherwise the strategy's sell once the gain
     has reached it (the strategy's other exits are off - it holds through
     the dips), else a signal add - the strategy's
@@ -318,9 +316,9 @@ async def _averaging(
         None if limits is None else limits.maintenance_margin,
     )
     if signal is None:
-        lots = await _lots(position, buys[0][1])
+        units = await _units(position)
         buffer = unwind_buffer(await taker_fee_rate())
-        signal = next_unwind(direction, price, buys[0][1], lots, position.size, buffer)
+        signal = next_unwind(direction, price, units, position.size, buffer)
     realized = position.realized_pnl_usd or Decimal(0)
     if signal is None and paper.intraday:
         signal = take_profit_close(

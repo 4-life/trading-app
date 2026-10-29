@@ -18,7 +18,7 @@ from app.executors.position_management import (
     TAKE_PROFIT_EXIT,
     UNWIND_EXIT,
     add_terms,
-    held_lots,
+    held_units,
     managed_signal,
     margin_levels,
     next_unwind,
@@ -27,6 +27,8 @@ from app.executors.position_management import (
     take_profit_close,
     take_profit_sell,
     unwind_buffer,
+    unwind_level,
+    unwound_unit,
 )
 from app.order_queue import Direction, Signal
 from app.papers.models import Paper
@@ -140,43 +142,75 @@ def test_every_strategy_entry_signal_adds_while_a_position_is_open() -> None:
     assert signal_add(Signal("enter", "short", "x"), "long") is None  # the other direction
 
 
-def test_the_dip_units_still_held() -> None:
+def test_every_buy_is_a_unit_and_each_sale_the_lowest_but_the_lowest() -> None:
     fills = [
-        ("buy", D(95), D("0.3")),
-        ("buy", D(91), D("0.3")),
-        ("buy", D(105), D("0.2")),  # a signal add above the first buy: not a unit
-        ("sell", D(100), D("0.3")),  # took the lowest unit but the lowest (95)
-        ("buy", D(93), D("0.3")),
+        ("buy", D(100), D(1)),  # the first buy
+        ("buy", D(105), D(1)),  # a signal add above it: a unit too
+        ("buy", D(91), D(1)),
+        ("buy", D(95), D(1)),
+        ("sell", D(100), D(1)),  # took the lowest unit but the lowest (95)
     ]
-    assert held_lots("long", D(100), fills) == [(D(91), D("0.3")), (D(93), D("0.3"))]
+    assert held_units(1, fills) == [(D(100), D(1)), (D(105), D(1)), (D(91), D(1))]
 
 
-def test_the_lowest_unit_is_kept_the_next_sold_at_the_level_of_the_add_above_it() -> None:
-    lots = [(D(95), D("0.3")), (D(91), D("0.3")), (D(87), D("0.3"))]
+def test_the_owners_grid() -> None:
+    """100 open, 90 signal add, 80 / 70 / 60 dips; back up: 70 sold at 80, 80
+    at 90, a 90 signal add, both 90s at 100, then 100 at 120's level once
+    the 120 signal add came; 60 kept to the close."""
+    buffer = unwind_buffer(D("0.0005"))
+    units = [(D(p), D(1)) for p in (100, 90, 80, 70, 60)]
+    assert unwind_level(1, units, buffer) == D(80)  # 70 at the next-higher unit
+    units.remove((D(70), D(1)))
+    assert unwind_level(1, units, buffer) == D(90)  # 80
+    units.remove((D(80), D(1)))
+    units.append((D(90), D(1)))  # the signal add
+    assert unwound_unit(1, units) == (D(90), D(1))
+    assert unwind_level(1, units, buffer) == D(100)  # the first 90
+    units.remove((D(90), D(1)))
+    assert unwind_level(1, units, buffer) == D(100)  # the second 90
+    units.remove((D(90), D(1)))
+    # 100 is now the highest: half the way from 60 above it.
+    assert unwind_level(1, units, buffer) == D(120)
+    units.append((D(120), D(1)))  # a signal add
+    assert unwind_level(1, units, buffer) == D(120)  # 100 at the next-higher unit
+    units.remove((D(100), D(1)))
+    assert unwind_level(1, units, buffer) == D(150)  # 120 + (120 - 60) / 2
+    units.remove((D(120), D(1)))
+    assert unwind_level(1, units, buffer) is None  # 60 is the lowest: kept
+
+
+def test_a_unit_never_sells_under_its_own_price_plus_the_buffer() -> None:
     buffer = unwind_buffer(D("0.0005"))  # 0.4% markup + 2 x 0.05% fees = 0.5%
     assert buffer == D("0.005")
-    # 87 is kept to the close: 91 is sold above 95 (+ the buffer: 95.475).
-    assert next_unwind("long", D("95.4"), D(100), lots, D("1.9"), buffer) is None
-    sell = next_unwind("long", D("95.5"), D(100), lots, D("1.9"), buffer)
-    assert sell == Signal("exit", "long", UNWIND_EXIT, close_fraction=D("0.3") / D("1.9"))
-    # The highest unit's level is the first buy's (+ the buffer).
-    assert next_unwind("long", D("100.4"), D(100), lots[:2], D("1.6"), buffer) is None
-    assert next_unwind("long", D("100.5"), D(100), lots[:2], D("1.6"), buffer) is not None
-    # A single unit is the lowest: never sold.
-    assert next_unwind("long", D(200), D(100), lots[:1], D("1.3"), buffer) is None
-    assert next_unwind("long", D(200), D(100), [], D(1), buffer) is None
+    # The next-higher unit too close: its own price + the buffer.
+    assert unwind_level(1, [(D(100), D(1)), (D("100.1"), D(1)), (D(99), D(1))], buffer) == D(
+        "100.500"
+    )
+    # The highest unit near the lowest: half the gap is under the buffer.
+    assert unwind_level(1, [(D(100), D(1)), (D("99.6"), D(1))], buffer) == D("100.500")
 
 
-def test_a_shorts_unwind_is_mirrored_the_buffer_below_the_level() -> None:
-    lots = [(D(105), D("0.3")), (D(109), D("0.3")), (D(113), D("0.3"))]
+def test_the_next_unwind_once_the_price_is_at_its_level() -> None:
+    units = [(D(100), D("0.3")), (D(95), D("0.3")), (D(91), D("0.3")), (D(87), D("0.3"))]
     buffer = unwind_buffer(D("0.0005"))
-    # 113 is kept to the close: 109 is bought back under 105 (- the buffer: 104.475).
-    assert next_unwind("short", D("104.5"), D(100), lots, D("1.9"), buffer) is None
-    sell = next_unwind("short", D("104.4"), D(100), lots, D("1.9"), buffer)
-    assert sell == Signal("exit", "short", UNWIND_EXIT, close_fraction=D("0.3") / D("1.9"))
-    # The lowest unit's level is the first sell's (- the buffer).
-    assert next_unwind("short", D("99.6"), D(100), lots[:2], D("1.6"), buffer) is None
-    assert next_unwind("short", D("99.5"), D(100), lots[:2], D("1.6"), buffer) is not None
+    # 87 kept to the close: 91 sold at 95.
+    assert next_unwind("long", D("94.9"), units, D("1.2"), buffer) is None
+    sell = next_unwind("long", D(95), units, D("1.2"), buffer)
+    assert sell == Signal("exit", "long", UNWIND_EXIT, close_fraction=D("0.3") / D("1.2"))
+    # A single unit is the lowest: never sold.
+    assert next_unwind("long", D(200), units[:1], D("0.3"), buffer) is None
+    assert next_unwind("long", D(200), [], D(1), buffer) is None
+
+
+def test_a_shorts_grid_is_mirrored() -> None:
+    units = [(D(100), D("0.3")), (D(105), D("0.3")), (D(109), D("0.3")), (D(113), D("0.3"))]
+    buffer = unwind_buffer(D("0.0005"))
+    # 113 kept to the close: 109 bought back at 105.
+    assert next_unwind("short", D("105.1"), units, D("1.2"), buffer) is None
+    sell = next_unwind("short", D(105), units, D("1.2"), buffer)
+    assert sell == Signal("exit", "short", UNWIND_EXIT, close_fraction=D("0.3") / D("1.2"))
+    # The lowest price is the highest unit: half the way from 113 below it.
+    assert unwind_level(-1, [(D(100), D(1)), (D(113), D(1))], buffer) == D("93.5")
 
 
 def test_max_margin_and_intraday_are_averaging_settings() -> None:

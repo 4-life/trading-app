@@ -25,11 +25,10 @@ there - its unwinds' realized PnL plus the size held - is at least
 floor, not an exit of its own; a sell below it is ignored. Still open, a
 strategy entry signal on the candle adds a unit at that entry's price (a
 signal add, sized like the first entry). On the candle's way up each
-unit of the grid - the first buy, every dip add, a signal add under the
-first buy - lowest first, but never the lowest held, kept to the close, is
-sold once it's in profit: at its own buy price plus the unwind buffer
-(backtest only - the live grid sells at the next-higher unit's price) -
-not in a candle that added units, whose high may have come before its low.
+unit of the grid - every buy: the first, every dip add and signal add -
+lowest first, but never the lowest held, kept to the close, is sold at
+the next-higher unit's price (unwind_level, as live) - not in a candle
+that added units, whose high may have come before its low.
 After a take-profit close the live paper stops until the owner enables it
 again; here the next entry signal opens the next position, as if
 re-enabled. An `intraday` paper closes at its take-profit at once - when
@@ -83,6 +82,8 @@ from app.executors.position_management import (
     TAKE_PROFIT_EXIT,
     margin_levels,
     unwind_buffer,
+    unwind_level,
+    unwound_unit,
 )
 from app.market_data.limits import Limits, market_limits
 from app.notifications.error_reporting import run_service
@@ -95,9 +96,6 @@ LIQUIDATION_EXIT = "liquidation"  # the execution engine's maintenance-margin cl
 # A paper's every fill (entries, adds, unwinds, closes) this much against it:
 # the backtest's exact levels don't happen live.
 FILL_SLIPPAGE = STOP_SLIPPAGE
-# With this many dip units held (the first buy not counted), the grid sells
-# them in pairs - the two cheapest at the higher one's price (backtest only).
-PAIR_FROM_DIPS = 3
 
 # The executors whose backtest gives an averaging paper its entries and sells.
 STRATEGY_TRADES: dict[str, Callable[[Paper, list[Bar], datetime | None], list[SimTrade]]] = {
@@ -181,43 +179,24 @@ class Position:
     slippage: float = 0.0  # Rules.slippage
     realized: float = 0.0  # the sells' PnL, net of their fees
     fills: list[Fill] = field(default_factory=list)
-    # The grid's units held (price, size): the first buy, every dip add and
-    # every signal add under the first buy.
-    lots: list[tuple[float, float]] = field(default_factory=list)
-    first_lot: tuple[float, float] | None = None  # the first buy's unit
+    # The grid's units held (price, size): every buy - the first, every dip
+    # add and signal add (held_units, as live).
+    units: list[tuple[float, float]] = field(default_factory=list)
 
     @property
     def entry(self) -> float:
         return self.cost / self.size
 
-    def _next_sale(self) -> list[tuple[float, float]]:
-        """The units the next sale sells - never the lowest, kept to the close:
-        with PAIR_FROM_DIPS dip units or more held, the two cheapest others
-        together; else the cheapest other alone. Empty with fewer than two units.
-        (A short: mirrored - the highest kept, the next-highest sold.)"""
-        sellable = sorted(self.lots, key=lambda lot: self.sign * lot[0])[1:]
-        dips = len(self.lots) - (self.first_lot in self.lots)
-        return sellable[:2] if dips >= PAIR_FROM_DIPS and len(sellable) >= 2 else sellable[:1]
-
     def next_unwind(self, buffer: float) -> float | None:
-        """The price the next sale fills at: its (highest) unit's buy price
-        plus `buffer` (fees, slippage and a small gain) - sold as soon as all
-        of it is in profit, to average the loss down; None with nothing to
-        sell. (The live grid sells one unit at the next-higher unit's price
-        instead - backtest only.)"""
-        units = self._next_sale()
-        if not units:
-            return None
-        return max((p for p, _ in units), key=lambda p: self.sign * p) * (1 + self.sign * buffer)
+        """The price the next unwind sells at (unwind_level, as live)."""
+        return unwind_level(self.sign, self.units, buffer)
 
     def unwind(self, time: datetime, price: float, fee_rate: float) -> None:
-        """Sells the next sale's units at `price`, one fill (a pair at once)."""
-        units = self._next_sale()
-        for unit in units:
-            self.lots.remove(unit)
-        size = sum(q for _, q in units)
-        bought = sum(p * q for p, q in units) / size  # the units' average buy price
-        self.sell(time, price, size / self.size, fee_rate, bought)
+        """Sells the next unwind's unit (unwound_unit, as live) at `price`."""
+        unit = unwound_unit(self.sign, self.units)
+        assert unit is not None
+        self.units.remove(unit)
+        self.sell(time, price, unit[1] / self.size, fee_rate, unit[0])
 
     def pnl_at(self, price: float, fee_rate: float) -> float:
         """The whole PnL closed at `price`: the sells' + the size held's, after fees."""
@@ -253,19 +232,14 @@ class Position:
         margin: float,
         leverage: float,
         fee_rate: float,
-        dip: bool = False,
     ) -> None:
-        """`dip`: a dip add (the margin left down to ADD_AT_MARGIN_LEFT) - a
-        unit of the grid whatever its price; so is the first buy and a signal
-        add under it."""
+        """Every buy is a unit of the grid - the first, a dip add (the margin
+        left down to ADD_AT_MARGIN_LEFT) or a signal add."""
         price *= 1 + self.sign * self.slippage
         if not self.fills:
             self.first_buy = price  # its fill
         notional = margin * leverage
-        if not self.fills or dip or self.sign * (self.first_buy - price) > 0:
-            self.lots.append((price, notional / price))
-            if not self.fills:
-                self.first_lot = self.lots[-1]
+        self.units.append((price, notional / price))
         self.fills.append(Fill(time, price, margin, notional))
         self.size += notional / price
         self.cost += notional
@@ -417,7 +391,7 @@ def _down_to_low(pos: Position, bar: Bar, rules: Rules, fee_rate: float) -> Aver
         fill = _worse(sign, level, bar.open)
         if reason:
             return _close(pos, bar, fill, reason, rules, fee_rate)
-        pos.buy(bar.time, fill, rules.add_size, rules.add_leverage, fee_rate, dip=True)
+        pos.buy(bar.time, fill, rules.add_size, rules.add_leverage, fee_rate)
 
 
 def in_trend(bars: list[Bar], trades: Sequence[SimTrade], direction: str = "long") -> set[datetime]:
