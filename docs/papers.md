@@ -99,7 +99,7 @@ The `scanner` service handles every scanner paper, after each candle close at it
 
 - The scanner paper doesn't count in the [budget split](budget-allocator.md); each enabled child does, like any paper.
 - [Market data](market-data.md#collected-data) collects candles and funding for every enabled paper's coin, so children don't need to be in the asset list.
-- **Live without a click:** once an [exchange API](dashboard.md#exchange-api) is set, the coins a scanner picks are created (or re-enabled) as **live** papers at once — a trend doesn't wait for a demo track record (scanner coins have no backtest). Without an API, or with a fractional leverage, they're demo. They trade only while live auto-trading is on; one enabled live paper per asset still applies (a coin already live elsewhere is skipped). Their "Go live" button stays off.
+- **Live with its scanner:** the coins a scanner picks are created (or re-enabled) in the scanner's own mode — demo until the owner clicks "Go live" on the scanner itself (no profit check: a scanner has no trades; whole-number leverage and an [exchange API](dashboard.md#exchange-api) are still needed), live from then on. Coins already running keep their mode until the scanner disables them; re-enabled ones take the scanner's. Live coins trade only while live auto-trading is on; one enabled live paper per asset still applies (a coin already live elsewhere is skipped), and only one scanner can be live at a time (they share the asset `*`). A coin's own "Go live" button stays off.
 - Deleting a scanner keeps its children (their `parent_id` is cleared).
 
 ## Preparation

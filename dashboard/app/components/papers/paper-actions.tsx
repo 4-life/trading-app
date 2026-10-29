@@ -14,10 +14,13 @@ export function PaperActions({ paper }: { paper: Paper }) {
   const busy = fetcher.state !== "idle";
   const submit = (intent: string) =>
     void fetcher.submit({ intent, paperId: String(paper.id) }, { method: "post" });
-  // Same rules the API enforces (docs/papers.md#lifecycle).
-  const scanned = paper.kind === "scanner" || paper.parent_id !== null;
+  // Same rules the API enforces (docs/papers.md#lifecycle): a scanner needs
+  // no profit, its coins follow its mode.
+  const scanned = paper.parent_id !== null;
   const backtestProfit = Number(paper.backtest_return_pct ?? 0) > 0;
-  const canGoLive = !scanned && (Number(paper.profitability_demo) > 0 || backtestProfit);
+  const canGoLive =
+    paper.kind === "scanner" ||
+    (!scanned && (Number(paper.profitability_demo) > 0 || backtestProfit));
 
   return (
     <div className="flex flex-wrap items-center gap-1">
@@ -27,7 +30,11 @@ export function PaperActions({ paper }: { paper: Paper }) {
         <ConfirmDialog
           trigger={<Button size="xs" variant="outline" disabled={busy || !canGoLive} />}
           title={`Switch paper ${paper.id} to live?`}
-          description={`${paper.executor} on ${paper.asset} will trade real money on the exchange.`}
+          description={
+            paper.kind === "scanner"
+              ? `The coins scanner ${paper.id} picks from now on will trade real money on the exchange.`
+              : `${paper.executor} on ${paper.asset} will trade real money on the exchange.`
+          }
           confirmLabel="Go live"
           onConfirm={() => submit("paperLive")}
         >
@@ -37,7 +44,7 @@ export function PaperActions({ paper }: { paper: Paper }) {
       {paper.enabled && paper.mode === "demo" && !canGoLive && (
         <span className="text-xs text-muted-foreground">
           {scanned
-            ? "goes live on its own with an exchange API"
+            ? "goes live with its scanner"
             : "needs demo profit > 0% or a profitable backtest"}
         </span>
       )}

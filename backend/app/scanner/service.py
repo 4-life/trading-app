@@ -110,11 +110,11 @@ async def _children(scanner: Paper) -> list[Child]:
 
 
 async def _child_mode(scanner: Paper) -> str:
-    """Live as soon as an exchange API is set (and the leverage is a whole
-    number, the exchanges' rule) - no "Go live" click; demo otherwise. Live
-    papers still trade only while live auto-trading is on."""
-    whole = scanner.leverage == int(scanner.leverage)
-    return "live" if whole and await get_exchange_api() is not None else "demo"
+    """The scanner's own mode - live once the owner switched it live (and an
+    exchange API is still set); demo otherwise. Live papers still trade only
+    while live auto-trading is on."""
+    live = scanner.mode == "live" and await get_exchange_api() is not None
+    return "live" if live else "demo"
 
 
 async def _taken_assets(scanner: Paper, mode: str) -> set[str]:

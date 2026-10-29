@@ -624,21 +624,20 @@ async def stop_sweep_batch() -> SweepBatchOut:
 async def switch_to_live(paper_id: int) -> PaperOut:
     """Demo -> live: needs profitability_demo > 0 or a profitable backtest,
     whole-number leverage, an exchange API, no open demo position, no order
-    in flight, and no other enabled live paper on the asset. Scanner coins
-    go live on their own (app/scanner/service.py)."""
+    in flight, and no other enabled live paper on the asset. A scanner skips
+    the profit check (it has no trades) and its coins follow its mode
+    (app/scanner/service.py) - they can't go live on their own."""
     async with async_session() as session:
         paper = await _get(session, paper_id)
         if paper.mode == "live":
             raise HTTPException(status_code=409, detail="paper is already live")
-        if paper.kind == "scanner" or paper.parent_id is not None:
-            raise HTTPException(
-                status_code=409,
-                detail="scanner coins go live on their own once an exchange API is set",
-            )
+        if paper.parent_id is not None:
+            raise HTTPException(status_code=409, detail="scanner coins go live with their scanner")
         if not paper.enabled:
             raise HTTPException(status_code=409, detail="paper is disabled")
         backtest = (await _backtest_returns(session, paper.id)).get(paper.id)
-        if paper.profitability_demo <= 0 and not (backtest and backtest > 0):
+        profitable = paper.profitability_demo > 0 or (backtest and backtest > 0)
+        if paper.kind != "scanner" and not profitable:
             raise HTTPException(
                 status_code=409, detail="needs demo profit above 0% or a profitable backtest"
             )
