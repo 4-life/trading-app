@@ -18,15 +18,22 @@ class ClosePositionResult(BaseModel):
     decision_id: int
 
 
+class ClosePosition(BaseModel):
+    disable_paper: bool = True  # the paper stops once the close is placed
+
+
 class ClosedOnExchange(BaseModel):
     close_price: Decimal = Field(gt=0)
 
 
 @router.post("/positions/{position_id}/close", response_model=ClosePositionResult)
-async def close_position(position_id: int) -> ClosePositionResult:
+async def close_position(
+    position_id: int, payload: ClosePosition | None = None
+) -> ClosePositionResult:
     """Queues an exit request for the position - see docs/api.md."""
+    disable_paper = payload is None or payload.disable_paper
     try:
-        decision_id = await request_manual_close(position_id)
+        decision_id = await request_manual_close(position_id, disable_paper)
     except NoOpenPosition as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except OrderInFlight as exc:

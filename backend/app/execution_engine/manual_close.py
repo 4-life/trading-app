@@ -3,8 +3,9 @@
 - Close: queues an exit request for one open position. It goes through the
   same order queue as any executor exit (risk engine, then execution engine)
   and is logged with reason `manual_close`; once it's placed the paper is
-  disabled (app/execution_engine/engine.py). Doesn't touch the auto-trading
-  switch.
+  disabled (app/execution_engine/engine.py) - or, closing only, it's
+  `manual_close_only` and the paper keeps running. Doesn't touch the
+  auto-trading switch.
 - Doesn't exist: the owner already closed a live position on Hyperliquid
   (or Hyperliquid liquidated it) - record it closed at the price they
   enter, reason `closed_on_exchange`. Nothing is sent to the exchange. The
@@ -19,7 +20,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.db import async_session
-from app.execution_engine.engine import MANUAL_CLOSE, entry_fee_share, update_profitability
+from app.execution_engine.engine import (
+    MANUAL_CLOSE,
+    MANUAL_CLOSE_ONLY,
+    entry_fee_share,
+    update_profitability,
+)
 from app.execution_engine.models import IN_FLIGHT_OUTCOMES, Position, TradingDecision
 from app.executors.base import latest_price
 from app.notifications.trades import notify_closed_on_exchange
@@ -43,8 +49,9 @@ class NotLive(Exception):
     pass
 
 
-async def request_manual_close(position_id: int) -> int:
-    """Returns the queued decision's id."""
+async def request_manual_close(position_id: int, disable_paper: bool = True) -> int:
+    """Returns the queued decision's id. `disable_paper`: the paper stops
+    once the close is placed; else it keeps running."""
     async with async_session() as session:
         position = await session.get(Position, position_id)
         if position is None or position.closed_at is not None:
@@ -54,7 +61,7 @@ async def request_manual_close(position_id: int) -> int:
         raise NoOpenPosition(f"position {position_id} has no paper")
 
     direction = cast(Literal["long", "short"], position.direction)
-    signal = Signal("exit", direction, MANUAL_CLOSE)
+    signal = Signal("exit", direction, MANUAL_CLOSE if disable_paper else MANUAL_CLOSE_ONLY)
     try:
         return await queue_decision(paper, signal, await latest_price(paper.asset, paper.timeframe))
     except IntegrityError as exc:

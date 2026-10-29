@@ -40,8 +40,10 @@ logger = logging.getLogger(__name__)
 
 LIQUIDATION = "liquidation"
 TAKE_PROFIT_STOP = "take-profit reached - enable it again at the next bottom"
-# The dashboard's Close (app/execution_engine/manual_close.py): the paper stops with it.
+# The dashboard's Close (app/execution_engine/manual_close.py): the paper stops
+# with it - or, closing only, keeps running.
 MANUAL_CLOSE = "manual_close"
+MANUAL_CLOSE_ONLY = "manual_close_only"
 MANUAL_CLOSE_STOP = "position closed manually"
 SERVICE_NAME = "execution-engine"
 

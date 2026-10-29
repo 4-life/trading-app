@@ -13,7 +13,8 @@ import {
 } from "@/components/ui/dialog";
 
 // Confirmation before an action. `trigger` is the element that opens it
-// (e.g. <Button size="xs" />), rendered with `children` inside.
+// (e.g. <Button size="xs" />), rendered with `children` inside;
+// `alternative`, another way to go ahead, next to the confirm button.
 export function ConfirmDialog({
   trigger,
   children,
@@ -22,6 +23,7 @@ export function ConfirmDialog({
   confirmLabel,
   destructive = false,
   onConfirm,
+  alternative,
 }: {
   trigger: ReactElement;
   children: ReactNode;
@@ -30,6 +32,7 @@ export function ConfirmDialog({
   confirmLabel: string;
   destructive?: boolean;
   onConfirm: () => void;
+  alternative?: { label: string; onConfirm: () => void };
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -42,6 +45,17 @@ export function ConfirmDialog({
         </DialogHeader>
         <DialogFooter>
           <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+          {alternative && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                alternative.onConfirm();
+                setOpen(false);
+              }}
+            >
+              {alternative.label}
+            </Button>
+          )}
           <Button
             variant={destructive ? "destructive" : "default"}
             onClick={() => {

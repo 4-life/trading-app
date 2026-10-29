@@ -60,7 +60,7 @@ Open and closed positions.
 | Exit | the position's exit rule |
 
 - Actions on an open position:
-  - **Close** — queues a market exit (reason `manual_close`); once it's placed, the paper is disabled ("position closed manually") - enable it again to trade.
+  - **Close** — asks first: **Close and disable paper** queues a market exit (reason `manual_close`) and, once it's placed, disables the paper ("position closed manually") - enable it again to trade; **Just close** queues the exit only (`manual_close_only`) - the paper keeps running.
   - **Doesn't exist** (live only) — for a position already closed on Hyperliquid by hand or liquidated there, e.g. while the VPS was down. A dialog asks for the price it closed at; the position is recorded closed at that price (reason `closed_on_exchange`), realized PnL minus the entry fee and an estimated taker fee for the exit, and the paper is disabled ("position closed on the exchange") - enable it again to trade. Nothing is sent to the exchange. Don't press Close for such a position — a market order on the opposite side would open a new one.
 - Filters: open / closed, live / demo.
 - The open positions' title shows the margin they lock together (the filtered rows').
