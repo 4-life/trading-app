@@ -19,7 +19,7 @@ The paper's timeframe, closed candles only (the last 500 — the trendlines' piv
 
 ## Chart
 
-A Supertrend paper's [strategy chart](dashboard.md#strategy-chart) also draws the Supertrend it trades (the lower trendline's for a long paper, the upper's for a short one): a 2px line, green in an uptrend, red in a downtrend, and its **Buy** (green, under the candle) / **Sell** (red, above it) arrows; the hover box shows its trend and value. The trendlines themselves aren't drawn. Other papers' charts don't show it.
+Every paper's [strategy chart](dashboard.md#strategy-chart) draws a Supertrend — the lower trendline's for a long paper, the upper's for a short or both one (a Supertrend paper's: the one it trades): a 2px line, green in an uptrend, red in a downtrend, and its **Buy** (green, under the candle) / **Sell** (red, above it) arrows; the hover box shows its trend and value. The trendlines themselves aren't drawn. A checkbox under the chart hides it.
 
 ## Backtest
 

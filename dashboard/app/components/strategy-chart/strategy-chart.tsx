@@ -307,7 +307,7 @@ function draw(api: IChartApi, chart: PaperChart): (data: PaperChart) => void {
   bandLine('band', LineStyle.Solid, (p) => p.band);
   bandLine('value', LineStyle.Dotted, (p) => p.inner);
 
-  // A Supertrend paper's Supertrend: green in an uptrend, red in a downtrend,
+  // The Supertrend (every paper's chart): green in an uptrend, red in a downtrend,
   // 2px - the series here, its points in repaint.
   const supertrendLine =
     chart.supertrend.length > 0
@@ -782,13 +782,8 @@ export default function StrategyChart({ chart }: { chart: PaperChart }) {
     };
   }, [chart, hidden]);
 
-  // The Supertrend only on a Supertrend paper's chart, the Keltner signals
-  // on a Keltner paper's.
-  const toggles = INDICATORS.filter(
-    ([key]) =>
-      (key !== 'supertrend' || chart.supertrend.length > 0) &&
-      (key !== 'keltner' || chart.executor === 'keltner'),
-  );
+  // The Keltner signals only on a Keltner paper's chart.
+  const toggles = INDICATORS.filter(([key]) => key !== 'keltner' || chart.executor === 'keltner');
   return (
     <div className="space-y-1">
       <div className="relative h-140 w-full">

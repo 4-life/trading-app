@@ -26,7 +26,6 @@ from app.execution_engine.models import Order, Position, TradingDecision
 from app.executors.keltner import KeltnerStrategy
 from app.executors.keltner_signals import keltner_signals
 from app.executors.liquidity_swings import liquidity_zones
-from app.executors.supertrend import SupertrendStrategy
 from app.executors.supertrend import signals as supertrend_signals
 from app.executors.swings import find_swings
 from app.executors.trend_bands import CALC_BARS, trend_bands
@@ -190,7 +189,7 @@ class PaperChartOut(BaseModel):
     vwap: list[VwapPointOut]
     # BigBeluga trend bands and their break signals per closed candle.
     bands: list[BandPointOut]
-    # A Supertrend paper's Supertrend and its Buy / Sell per closed candle; empty otherwise.
+    # The Supertrend and its Buy / Sell per closed candle - on every paper's chart.
     supertrend: list[SupertrendPointOut]
     # A Keltner paper's Buy / Sell candles (signals only); empty otherwise.
     keltner: list[KeltnerPointOut]
@@ -310,14 +309,10 @@ def _swings_and_zones(
     return swings, zones
 
 
-def _supertrend(
-    executor: str, direction: str, series: list[ChartCandle], keep: range
-) -> list[SupertrendPointOut]:
-    """A Supertrend paper's Supertrend - the one it trades (on the lower
-    trendline for a long paper, the upper for a short one) - computed over
-    `series` (closed candles), on the candles in `keep`; none for the others."""
-    if executor != SupertrendStrategy.name:
-        return []
+def _supertrend(direction: str, series: list[ChartCandle], keep: range) -> list[SupertrendPointOut]:
+    """Every paper's Supertrend - the one a Supertrend paper trades (on the
+    lower trendline for a long paper, the upper for the others) - computed
+    over `series` (closed candles), on the candles in `keep`."""
     st = supertrend_signals(
         [float(c.high) for c in series],
         [float(c.low) for c in series],
@@ -425,7 +420,7 @@ def _overlays(
         zones,
         _vwap(closed),
         _bands(older, keep),
-        _supertrend(executor, direction, older, keep),
+        _supertrend(direction, older, keep),
         _keltner(executor, older, keep),
     )
 
@@ -619,7 +614,7 @@ class CandleChunkOut(BaseModel):
     # CALC_BARS candles before it (the bands' whole path, the VWAP session).
     vwap: list[VwapPointOut]
     bands: list[BandPointOut]
-    supertrend: list[SupertrendPointOut]  # a Supertrend paper's
+    supertrend: list[SupertrendPointOut]  # every paper's
     keltner: list[KeltnerPointOut]  # a Keltner paper's
     swings: list[SwingOut]  # pivoting in the chunk
     liquidity_zones: list[LiquidityZoneOut]  # pivoting in the chunk, confirmed
@@ -659,7 +654,7 @@ def _chunk_overlays(
         zones,
         vwap,
         _bands(series, keep),
-        _supertrend(executor, direction, series, keep),
+        _supertrend(direction, series, keep),
         _keltner(executor, series, keep),
     )
 

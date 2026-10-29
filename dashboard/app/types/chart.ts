@@ -109,7 +109,7 @@ export interface BandPoint {
   signal: "long" | "short" | null; // break-up | break-down at this candle's close
 }
 
-// A Supertrend paper's Supertrend (docs/supertrend-strategy-engine.md).
+// The Supertrend, on every paper's chart (docs/supertrend-strategy-engine.md).
 export interface SupertrendPoint {
   time: string;
   line: number | null; // the up band in an uptrend, the dn band in a downtrend
@@ -134,7 +134,7 @@ export interface PaperChart {
   liquidity_zones: LiquidityZone[];
   vwap: VwapPoint[]; // VWAP + EMA 9 and their signals (every chart)
   bands: BandPoint[];
-  supertrend: SupertrendPoint[]; // a Supertrend paper's only
+  supertrend: SupertrendPoint[]; // every paper's
   keltner: KeltnerPoint[]; // a Keltner paper's only
   positions: ChartPosition[];
   backtest: BacktestTrade[];
