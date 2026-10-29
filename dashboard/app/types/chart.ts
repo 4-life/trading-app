@@ -117,6 +117,12 @@ export interface SupertrendPoint {
   signal: "long" | "short" | null; // Buy | Sell at this candle's close
 }
 
+// A Keltner paper's Buy / Sell candles (docs/keltner-strategy-engine.md#chart).
+export interface KeltnerPoint {
+  time: string;
+  signal: "long" | "short"; // Buy | Sell at this candle's close
+}
+
 export interface PaperChart {
   paper_id: number;
   asset: string;
@@ -129,6 +135,7 @@ export interface PaperChart {
   vwap: VwapPoint[]; // VWAP + EMA 9 and their signals (every chart)
   bands: BandPoint[];
   supertrend: SupertrendPoint[]; // a Supertrend paper's only
+  keltner: KeltnerPoint[]; // a Keltner paper's only
   positions: ChartPosition[];
   backtest: BacktestTrade[];
 }
@@ -140,6 +147,7 @@ export interface CandleChunk {
   vwap: VwapPoint[];
   bands: BandPoint[];
   supertrend: SupertrendPoint[];
+  keltner: KeltnerPoint[];
   swings: ChartSwing[]; // pivoting in the chunk
   liquidity_zones: LiquidityZone[];
 }

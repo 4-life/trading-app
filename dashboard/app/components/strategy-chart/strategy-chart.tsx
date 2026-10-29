@@ -469,6 +469,16 @@ function draw(api: IChartApi, chart: PaperChart): (data: PaperChart) => void {
         text: buy ? 'Buy' : 'Sell',
       });
     }
+    for (const p of data.keltner) {
+      const buy = p.signal === 'long';
+      markers.push({
+        time: sec(p.time) as UTCTimestamp,
+        position: buy ? 'belowBar' : 'aboveBar',
+        shape: buy ? 'arrowUp' : 'arrowDown',
+        color: buy ? GREEN : RED,
+        text: buy ? 'Buy' : 'Sell',
+      });
+    }
     for (const p of data.bands) {
       if (!p.signal) continue;
       const up = p.signal === 'long';
@@ -637,6 +647,7 @@ function withOlder(chart: PaperChart, older: Older): PaperChart {
     vwap: [...older.vwap.filter(before), ...chart.vwap],
     bands: [...older.bands.filter(before), ...chart.bands],
     supertrend: [...older.supertrend.filter(before), ...chart.supertrend],
+    keltner: [...older.keltner.filter(before), ...chart.keltner],
     swings: [...swings, ...chart.swings],
     liquidity_zones: [...zones, ...chart.liquidity_zones],
   };
@@ -652,6 +663,7 @@ function withoutHidden(chart: PaperChart, hidden: Set<Indicator>): PaperChart {
     vwap: hidden.has('vwap') ? [] : chart.vwap,
     bands: hidden.has('bands') ? [] : chart.bands,
     supertrend: hidden.has('supertrend') ? [] : chart.supertrend,
+    keltner: hidden.has('keltner') ? [] : chart.keltner,
   };
 }
 
@@ -686,6 +698,7 @@ export default function StrategyChart({ chart }: { chart: PaperChart }) {
         vwap: [],
         bands: [],
         supertrend: [],
+        keltner: [],
         swings: [],
         liquidity_zones: [],
         done: false,
@@ -729,6 +742,7 @@ export default function StrategyChart({ chart }: { chart: PaperChart }) {
           kept.vwap = [...chunk.vwap, ...kept.vwap];
           kept.bands = [...chunk.bands, ...kept.bands];
           kept.supertrend = [...chunk.supertrend, ...kept.supertrend];
+          kept.keltner = [...chunk.keltner, ...kept.keltner];
           kept.swings = [...chunk.swings, ...kept.swings];
           kept.liquidity_zones = [...chunk.liquidity_zones, ...kept.liquidity_zones];
           kept.done = chunk.candles.length < limit;
@@ -768,8 +782,13 @@ export default function StrategyChart({ chart }: { chart: PaperChart }) {
     };
   }, [chart, hidden]);
 
-  // The Supertrend only on a Supertrend paper's chart.
-  const toggles = INDICATORS.filter(([key]) => key !== 'supertrend' || chart.supertrend.length > 0);
+  // The Supertrend only on a Supertrend paper's chart, the Keltner signals
+  // on a Keltner paper's.
+  const toggles = INDICATORS.filter(
+    ([key]) =>
+      (key !== 'supertrend' || chart.supertrend.length > 0) &&
+      (key !== 'keltner' || chart.executor === 'keltner'),
+  );
   return (
     <div className="space-y-1">
       <div className="relative h-140 w-full">

@@ -24,18 +24,17 @@ export function Section<T>({
   const [settled, setSettled] = useState<Loaded<T> | null>(null);
   useEffect(() => {
     let current = true;
-    // Rejected (e.g. cut off by the stream's timeout): a failed load.
+    // Rejected: the stream was cut off - the connection to the dashboard
+    // server, not the API (its failures and timeouts resolve, well before
+    // the stream's timeout), e.g. a phone freezing the page in the
+    // background. The last data stays, no toast; the next refresh reloads it.
     void data.then(
       (loaded) => {
         if (current) {
           setSettled(loaded);
         }
       },
-      () => {
-        if (current) {
-          setSettled({ ok: false });
-        }
-      },
+      () => undefined,
     );
     return () => {
       current = false;

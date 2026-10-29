@@ -126,6 +126,14 @@ services:
       feature-backfill:
         condition: service_completed_successfully
 
+  keltner-executor:
+    <<: *backend
+    command: ["python", "-m", "app.executors.keltner"]
+    depends_on:
+      <<: *after-migrate
+      feature-backfill:
+        condition: service_completed_successfully
+
   trend-executor:
     <<: *backend
     command: ["python", "-m", "app.executors.trend"]

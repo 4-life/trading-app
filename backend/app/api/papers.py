@@ -57,11 +57,12 @@ router = APIRouter()
 # both only where the executor trades both (_EXECUTOR_DIRECTIONS).
 AVERAGING_DIRECTIONS = ("long", "short", "both")
 
-Executor = Literal["trend", "vwap", "regime", "supertrend"]
+Executor = Literal["trend", "vwap", "regime", "supertrend", "keltner"]
 _EXECUTOR_DIRECTIONS: dict[str, tuple[str, ...]] = {
     "trend": ("long", "short", "both"),
     "vwap": ("long", "both"),  # docs/vwap-strategy-engine.md
     "supertrend": ("long", "short"),  # no both (docs/supertrend-strategy-engine.md)
+    "keltner": ("long", "short"),  # no both (docs/keltner-strategy-engine.md)
     "regime": ("long", "short", "both"),
 }
 # Executors that can run as a scanner paper (docs/papers.md#kinds).

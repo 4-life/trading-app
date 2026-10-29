@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from app.backtest.averaging import backtest_paper as backtest_averaging
+from app.backtest.keltner import backtest_paper as backtest_keltner
 from app.backtest.regime import backtest_paper as backtest_regime
 from app.backtest.supertrend import backtest_paper as backtest_supertrend
 from app.backtest.vwap import backtest_paper as backtest_vwap
@@ -38,6 +39,7 @@ BACKTESTS: dict[str, Callable[[Paper, datetime | None], Awaitable[object]]] = {
     "vwap": backtest_vwap,
     "regime": backtest_regime,
     "supertrend": backtest_supertrend,
+    "keltner": backtest_keltner,
 }
 
 

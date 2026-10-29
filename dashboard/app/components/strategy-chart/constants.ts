@@ -13,5 +13,6 @@ export const INDICATORS = [
   ["vwap", "VWAP + EMA 9"],
   ["bands", "Trend bands"],
   ["supertrend", "Supertrend"],
+  ["keltner", "Keltner signals"],
 ] as const;
 export const HIDDEN_INDICATORS_KEY = "chart-hidden-indicators";

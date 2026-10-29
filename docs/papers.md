@@ -69,7 +69,7 @@ A paper of kind `averaging` holds a **long** through the dips, adding to it, unt
 
 ## Stop-loss and Take-profit
 
-A **single** paper can set its own **stop-loss** (`stop_loss_pct`) and **take-profit** (`price_take_profit_pct`), each a share of the **entry price** (0.02 = 2%; empty: none) — on top of whatever its strategy does. The position closes at the **first** of them and its strategy's own exits (signals, stops, trailing stops): a strategy without exits of its own (VWAP, Supertrend) gets them added; one with its own stops (Regime, Trend) keeps them, and the paper's tighter stop cuts in first. Averaging papers have their own take-profit and give-up instead — not allowed there (`422`).
+A **single** paper can set its own **stop-loss** (`stop_loss_pct`) and **take-profit** (`price_take_profit_pct`), each a share of the **entry price** (0.02 = 2%; empty: none) — on top of whatever its strategy does. The position closes at the **first** of them and its strategy's own exits (signals, stops, trailing stops): a strategy without exits of its own (VWAP, Supertrend, Keltner) gets them added; one with its own stops (Regime, Trend) keeps them, and the paper's tighter stop cuts in first. Averaging papers have their own take-profit and give-up instead — not allowed there (`422`).
 
 - **Live** (demo and live): the [shared executor loop](strategy-executor.md) checks every open position against them every pass (5 s), on the latest trade price, **before** asking the strategy, and queues the exit (`paper_stop_loss` / `paper_take_profit`). An entry records their prices on its decision — the tighter stop and the nearer take-profit, against the strategy's own (`backend/app/executors/paper_exits.py`).
 - **Backtest**: each of the strategy's trades is cut at them where one is reached before its own exit — from the candle after the entry, inside each candle the stop first (worst case), then the take-profit; each fills at its level (at the open past it), a stop `STOP_SLIPPAGE` further. Saving a paper's stop-loss / take-profit re-runs its backtest. An approximation: after such a cut the backtest waits for the strategy's next trade — live, a new entry signal may come before the strategy's own exit would have.
@@ -107,7 +107,7 @@ The `scanner` service handles every scanner paper, after each candle close at it
 A new `single` paper isn't traded straight away: its data is prepared first (`backend/app/papers/prep.py`, a loop in the market-data service — it holds the exchange connection and owns the data). `prep_status` walks:
 
 1. **`backfilling`** — `BACKFILL_DAYS` of candles at the paper's timeframe (plus BTC at that timeframe for `trend`, its bear filter), funding, and features.
-2. **`backtesting`** — only for executors with a backtest (`vwap`, `regime`, `supertrend`); `trend` skips it.
+2. **`backtesting`** — only for executors with a backtest (`vwap`, `regime`, `supertrend`, `keltner`); `trend` skips it.
 3. **ready** (`null`) — the executor starts trading it.
 
 - An error leaves **`failed`** with `prep_error`; such a paper isn't traded — delete it and create it again.

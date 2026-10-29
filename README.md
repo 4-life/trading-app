@@ -88,7 +88,7 @@ Deployed as a Docker Compose stack of independent services, mirroring the layers
 
 - [market-data](docs/market-data.md) — market data.
 - [feature-engine](docs/feature-engine.md) — normalized features across price, volume, derivatives, order book, and tokenized-equity domains.
-- [strategy-executor](docs/strategy-executor.md) — can be many containers; each is a dedicated, hardcoded strategy ([VWAP + EMA9](docs/vwap-strategy-engine.md), [Trend](docs/trend-strategy-engine.md), [Regime](docs/regime-strategy-engine.md) or [Supertrend](docs/supertrend-strategy-engine.md)) run independently across every configured asset; the [swing indicators](docs/swings.md) they and the chart share.
+- [strategy-executor](docs/strategy-executor.md) — can be many containers; each is a dedicated, hardcoded strategy ([VWAP + EMA9](docs/vwap-strategy-engine.md), [Trend](docs/trend-strategy-engine.md), [Regime](docs/regime-strategy-engine.md), [Supertrend](docs/supertrend-strategy-engine.md) or [Keltner](docs/keltner-strategy-engine.md)) run independently across every configured asset; the [swing indicators](docs/swings.md) they and the chart share.
 - scanner — finds coins across the market for [scanner papers](docs/papers.md#scanner-papers) and creates papers for them.
 - [risk-engine](docs/risk-engine.md) — sits above all containers: checks risk and budget in real time, approves every new position, can stop any executor from opening positions, disables papers that are losing their budget.
 - [execution-engine](docs/execution-engine.md) — the exchange abstraction, Hyperliquid integration, demo execution, and wallet key custody.

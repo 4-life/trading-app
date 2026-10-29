@@ -71,7 +71,7 @@ from decimal import Decimal
 
 from sqlalchemy import delete, select
 
-from app.backtest import regime, supertrend, vwap
+from app.backtest import keltner, regime, supertrend, vwap
 from app.backtest.bars import STOP_SLIPPAGE, Bar, Fill, SimTrade, load_bars
 from app.backtest.models import OPEN_AT_END, BacktestFill, BacktestTrade
 from app.config import settings
@@ -103,6 +103,7 @@ PAIR_FROM_DIPS = 3
 STRATEGY_TRADES: dict[str, Callable[[Paper, list[Bar], datetime | None], list[SimTrade]]] = {
     "vwap": vwap.simulate_paper,
     "supertrend": supertrend.simulate_paper,
+    "keltner": keltner.simulate_paper,
     "regime": regime.simulate_paper,
 }
 # Every candle a strategy signals a long on, its own trade held or not - the
@@ -110,6 +111,7 @@ STRATEGY_TRADES: dict[str, Callable[[Paper, list[Bar], datetime | None], list[Si
 ENTRY_SIGNALS: dict[str, Callable[[Paper, list[Bar]], list[SimTrade]]] = {
     "vwap": vwap.entry_signals,
     "supertrend": supertrend.entry_signals,
+    "keltner": keltner.entry_signals,
     "regime": regime.entry_signals,
 }
 

@@ -5,6 +5,7 @@ export const EXECUTORS: Record<string, readonly string[]> = {
   trend: ['long', 'short', 'both'],
   vwap: ['long', 'both'],
   supertrend: ['long', 'short'],
+  keltner: ['long', 'short'],
   regime: ['long', 'short', 'both'],
 };
 // An averaging paper's directions, whatever its executor (the API's

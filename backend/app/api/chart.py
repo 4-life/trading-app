@@ -1,6 +1,6 @@
 """One paper's chart: candles at its timeframe, its positions with every fill,
 and the swing labels (docs/api.md). The overlays (swings, zones, VWAP, trend
-bands, Supertrend) are computed in a worker thread - the event loop keeps
+bands, Supertrend, Keltner signals) are computed in a worker thread - the event loop keeps
 answering meanwhile - and cached until the next candle closes."""
 
 import asyncio
@@ -23,6 +23,8 @@ from app.config import settings
 from app.db import async_session
 from app.execution_engine.demo import unrealized_pnl
 from app.execution_engine.models import Order, Position, TradingDecision
+from app.executors.keltner import KeltnerStrategy
+from app.executors.keltner_signals import keltner_signals
 from app.executors.liquidity_swings import liquidity_zones
 from app.executors.supertrend import SupertrendStrategy
 from app.executors.supertrend import signals as supertrend_signals
@@ -110,6 +112,11 @@ class SupertrendPointOut(BaseModel):
     signal: str | None  # long (Buy) | short (Sell) at this candle's close
 
 
+class KeltnerPointOut(BaseModel):
+    time: datetime  # the candle's open time
+    signal: str  # long (Buy) | short (Sell) at this candle's close
+
+
 class FillOut(BaseModel):
     time: datetime
     side: str  # buy | sell
@@ -185,6 +192,8 @@ class PaperChartOut(BaseModel):
     bands: list[BandPointOut]
     # A Supertrend paper's Supertrend and its Buy / Sell per closed candle; empty otherwise.
     supertrend: list[SupertrendPointOut]
+    # A Keltner paper's Buy / Sell candles (signals only); empty otherwise.
+    keltner: list[KeltnerPointOut]
     positions: list[ChartPositionOut]
     # Temporary: the executor's backtest (docs/vwap-strategy-engine.md#backtest).
     backtest: list[BacktestTradeOut]
@@ -326,6 +335,23 @@ def _supertrend(
     ]
 
 
+def _keltner(executor: str, series: list[ChartCandle], keep: range) -> list[KeltnerPointOut]:
+    """A Keltner paper's Buy / Sell candles in `keep`, computed over `series`
+    (closed candles); none for the others."""
+    if executor != KeltnerStrategy.name:
+        return []
+    ks = keltner_signals(
+        [float(c.high) for c in series],
+        [float(c.low) for c in series],
+        [float(c.close) for c in series],
+    )
+    return [
+        KeltnerPointOut(time=series[j].open_time, signal="long" if ks.buy[j] else "short")
+        for j in keep
+        if ks.buy[j] or ks.sell[j]
+    ]
+
+
 def _bands(series: list[ChartCandle], keep: range) -> list[BandPointOut]:
     """The trend bands computed over `series` (closed candles - the state
     depends on the whole path), on the candles in `keep`."""
@@ -358,6 +384,7 @@ class _Overlays:
     vwap: list[VwapPointOut]
     bands: list[BandPointOut]
     supertrend: list[SupertrendPointOut]
+    keltner: list[KeltnerPointOut]
 
 
 def _vwap(closed: list[ChartCandle]) -> list[VwapPointOut]:
@@ -387,8 +414,9 @@ def _overlays(
     executor: str, direction: str, closed: list[ChartCandle], older: list[ChartCandle]
 ) -> _Overlays:
     """Every overlay on every chart, whatever the paper's executor: over the
-    window's closed candles; the bands and the Supertrend over the `older`
-    history (their state depends on the whole path), on the window's candles.
+    window's closed candles; the bands, the Supertrend and the Keltner
+    signals over the `older` history (their state depends on the whole
+    path), on the window's candles.
     CPU-bound - run in a worker thread."""
     swings, zones = _swings_and_zones(closed, range(len(closed)))
     keep = range(len(older) - len(closed), len(older))
@@ -398,6 +426,7 @@ def _overlays(
         _vwap(closed),
         _bands(older, keep),
         _supertrend(executor, direction, older, keep),
+        _keltner(executor, older, keep),
     )
 
 
@@ -503,7 +532,7 @@ async def paper_chart(
     overlays = (
         await _cached_overlays(paper, closed, history[:-1])
         if closed
-        else _Overlays([], [], [], [], [])
+        else _Overlays([], [], [], [], [], [])
     )
 
     last_close = candles[-1].close if candles else None
@@ -533,6 +562,7 @@ async def paper_chart(
         vwap=overlays.vwap,
         bands=overlays.bands,
         supertrend=overlays.supertrend,
+        keltner=overlays.keltner,
         positions=[
             ChartPositionOut(
                 id=p.id,
@@ -590,6 +620,7 @@ class CandleChunkOut(BaseModel):
     vwap: list[VwapPointOut]
     bands: list[BandPointOut]
     supertrend: list[SupertrendPointOut]  # a Supertrend paper's
+    keltner: list[KeltnerPointOut]  # a Keltner paper's
     swings: list[SwingOut]  # pivoting in the chunk
     liquidity_zones: list[LiquidityZoneOut]  # pivoting in the chunk, confirmed
 
@@ -624,7 +655,12 @@ def _chunk_overlays(
         for k in keep
     ]
     return _Overlays(
-        swings, zones, vwap, _bands(series, keep), _supertrend(executor, direction, series, keep)
+        swings,
+        zones,
+        vwap,
+        _bands(series, keep),
+        _supertrend(executor, direction, series, keep),
+        _keltner(executor, series, keep),
     )
 
 
@@ -645,7 +681,13 @@ async def paper_candles(
         chunk = await _load_candles(session, paper, limit, before=before)
         if not chunk:
             return CandleChunkOut(
-                candles=[], vwap=[], bands=[], supertrend=[], swings=[], liquidity_zones=[]
+                candles=[],
+                vwap=[],
+                bands=[],
+                supertrend=[],
+                keltner=[],
+                swings=[],
+                liquidity_zones=[],
             )
         warmup = await _load_candles(session, paper, CALC_BARS, before=chunk[0].open_time)
         after = await _load_candles(session, paper, CHUNK_OVERLAP, since=before, oldest=True)
@@ -658,6 +700,7 @@ async def paper_candles(
         vwap=overlays.vwap,
         bands=overlays.bands,
         supertrend=overlays.supertrend,
+        keltner=overlays.keltner,
         swings=overlays.swings,
         liquidity_zones=overlays.zones,
     )
