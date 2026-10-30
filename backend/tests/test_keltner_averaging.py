@@ -105,3 +105,56 @@ def test_the_backtest_passes_the_broken_first_sell() -> None:
     exits = [exit_at("long", bars[1], "keltner_sell"), exit_at("long", bars[2], "keltner_sell")]
     [t] = simulate(bars, [], RULES, signals_held=[_buy(0, 100)], exits=exits, guard=g)
     assert (t.closed_at, t.exit_reason) == (bars[2].time, f"{TAKE_PROFIT_EXIT}:keltner_sell")
+
+
+def test_a_signal_add_needs_one_percent_below_the_last_buy_and_at_most_five() -> None:
+    g = _guard([99.5, 99.0, 98.0])
+    assert not g.signal_add_allowed("long", 0, 100.0, 0)  # 0.5% below
+    assert g.signal_add_allowed("long", 1, 100.0, 0)  # 1% below
+    assert not g.signal_add_allowed("long", 2, 100.0, 5)  # the sixth
+
+
+def test_a_strength_add_on_the_supertrend_flip_in_profit() -> None:
+    g = _guard([100.0, 101.0])
+    g = KeltnerGuard(g.closes, [-1, 1], g.line, g.buy, g.sell, g.low, g.high)
+    assert g.strength_add("long", 1, pnl=1.0)
+    assert not g.strength_add("long", 1, pnl=-1.0)
+    assert not g.strength_add("short", 1, pnl=1.0)  # a short's flip is to red
+
+
+def test_the_backtest_keeps_the_core_and_spaces_the_signal_adds() -> None:
+    # In at 100 (the core); a Buy at 1 (99.5) is too close; at 2 (98.5) a
+    # signal add; at 3 the price is back at 100: the add sells at the core's
+    # price, the core is kept.
+    closes = [100.0, 99.5, 98.5, 100.0, 100.0]
+    g = _guard(closes)
+    signals = [_buy(0, 100), _buy(1, 99.5), _buy(2, 98.5)]
+    [t] = simulate(_bars(closes), [], RULES, signals_held=signals, guard=g)
+    assert [(f.side, f.time) for f in t.fills] == [
+        ("buy", T0),
+        ("buy", T0 + timedelta(hours=2)),
+        ("sell", T0 + timedelta(hours=3)),
+    ]
+    assert t.fills[2].price == 100.0
+
+
+def test_the_backtest_adds_on_strength_and_never_unwinds_it() -> None:
+    # In at 100; the Supertrend flips green at 2 in profit (102): a core add.
+    closes = [100.0, 101.0, 102.0, 105.0, 105.0]
+    g = _guard(closes)
+    g = KeltnerGuard(g.closes, [-1, -1, 1, 1, 1], g.line, g.buy, g.sell, g.low, g.high)
+    [t] = simulate(_bars(closes), [], RULES, signals_held=[_buy(0, 100)], guard=g)
+    assert [(f.side, f.time, f.price) for f in t.fills] == [
+        ("buy", T0, 100.0),
+        ("buy", T0 + timedelta(hours=2), 102.0),
+    ]
+
+
+def test_a_dead_backtest_position_adds_nothing() -> None:
+    # Dead at 1 (96 under the LL at 97, in loss): the dip to 94.5 at 2 adds nothing.
+    closes = [100.0, 96.0, 95.0, 95.0]
+    bars = _bars(closes)
+    bars[2] = Bar(bars[2].time, 96.0, 96.0, 94.5, 95.0)
+    g = _guard(closes, lows={0: 97.0})
+    [t] = simulate(bars, [], RULES, signals_held=[_buy(0, 100), _buy(2, 95)], guard=g)
+    assert [f.side for f in t.fills] == ["buy"]

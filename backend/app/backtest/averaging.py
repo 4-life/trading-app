@@ -194,8 +194,11 @@ class Position:
     realized: float = 0.0  # the sells' PnL, net of their fees
     fills: list[Fill] = field(default_factory=list)
     # The grid's units held (price, size): every buy - the first, every dip
-    # add and signal add (held_units, as live).
+    # add and signal add (held_units, as live) - but the core ones.
     units: list[tuple[float, float]] = field(default_factory=list)
+    # Its core (held_grid, as live): a Guard's first entry and strength adds - never sold.
+    core: list[tuple[float, float]] = field(default_factory=list)
+    signal_adds: int = 0
 
     @property
     def entry(self) -> float:
@@ -203,11 +206,11 @@ class Position:
 
     def next_unwind(self, buffer: float) -> float | None:
         """The price the next unwind sells at (unwind_level, as live)."""
-        return unwind_level(self.sign, self.units, buffer)
+        return unwind_level(self.sign, self.units, buffer, self.core)
 
     def unwind(self, time: datetime, price: float, fee_rate: float) -> None:
         """Sells the next unwind's unit (unwound_unit, as live) at `price`."""
-        unit = unwound_unit(self.sign, self.units)
+        unit = unwound_unit(self.sign, self.units, self.core)
         assert unit is not None
         self.units.remove(unit)
         self.sell(time, price, unit[1] / self.size, fee_rate, unit[0])
@@ -246,14 +249,16 @@ class Position:
         margin: float,
         leverage: float,
         fee_rate: float,
+        core: bool = False,
     ) -> None:
         """Every buy is a unit of the grid - the first, a dip add (the margin
-        left down to ADD_AT_MARGIN_LEFT) or a signal add."""
+        left down to ADD_AT_MARGIN_LEFT) or a signal add; a `core` one
+        (a Guard's first entry, a strength add) is never sold."""
         price *= 1 + self.sign * self.slippage
         if not self.fills:
             self.first_buy = price  # its fill
         notional = margin * leverage
-        self.units.append((price, notional / price))
+        (self.core if core else self.units).append((price, notional / price))
         self.fills.append(Fill(time, price, margin, notional))
         self.size += notional / price
         self.cost += notional
@@ -374,13 +379,16 @@ def _can_add(pos: Position, margin: float) -> bool:
     return pos.budget is None or pos.margin + margin <= pos.budget
 
 
-def _down_to_low(pos: Position, bar: Bar, rules: Rules, fee_rate: float) -> AveragingTrade | None:
+def _down_to_low(
+    pos: Position, bar: Bar, rules: Rules, fee_rate: float, adds: bool = True
+) -> AveragingTrade | None:
     """The candle's way down to its low: the adds, the give-ups and the
     liquidation it reaches, highest price first (an exit before an add at
     the same price); each fills at its level, or at the open past it. Past
     the budget no add comes - the dip runs on to a give-up: the automatic
     one (OUT_OF_MARGIN_EXIT) comes before the execution engine's liquidation,
-    which only a gap past both reaches - at the open, the give-up's fill. The
+    which only a gap past both reaches - at the open, the give-up's fill. No
+    add without `adds` (a dead position). The
     exchange's (`maintenance_notional`) can come first at a high leverage.
     A short's: the way up to its high, lowest price first."""
     sign = pos.sign
@@ -395,7 +403,7 @@ def _down_to_low(pos: Position, bar: Bar, rules: Rules, fee_rate: float) -> Aver
         ]
         if rules.max_drawdown is not None:
             events.append((_give_up_price(pos, rules.max_drawdown), 3, MAX_DRAWDOWN_EXIT))
-        if _can_add(pos, rules.add_size):
+        if adds and _can_add(pos, rules.add_size):
             events.append((pos.margin_left_at(add_at), 0, ""))
         reached = [e for e in events if sign * (e[0] - adverse) >= 0]
         if not reached:
@@ -482,7 +490,7 @@ def simulate(
             signal = signals[direction].get(bar.time)  # its own direction's only
             favourable = bar.high if sign == 1 else bar.low  # a short's way down
             buys = len(pos.fills)
-            closed = _down_to_low(pos, bar, rules, fee_rate)
+            closed = _down_to_low(pos, bar, rules, fee_rate, adds=not dead)
             # On the way up, each unit but the lowest is sold once it's in profit
             # - not in a candle that added units: its high may have come first.
             added = len(pos.fills) > buys
@@ -533,11 +541,27 @@ def simulate(
                 if reopen and funded:
                     # The trend still on: a fresh position at the candle's close.
                     pos = open_at(bar.time, REOPEN_IN_TREND, bar.close, sign)
-                    pos.buy(bar.time, bar.close, rules.initial_size, rules.leverage, fee_rate)
+                    cored = guard is not None
+                    pos.buy(
+                        bar.time, bar.close, rules.initial_size, rules.leverage, fee_rate, cored
+                    )
                     entry, dead = i, False
-            elif signal is not None and _can_add(pos, rules.initial_size):
-                # A signal add, sized like the first entry.
-                pos.buy(bar.time, signal.entry_price, rules.initial_size, rules.leverage, fee_rate)
+            elif not dead and _can_add(pos, rules.initial_size):
+                last_buy = next(f.price for f in reversed(pos.fills) if f.side == "buy")
+                allowed = guard is None or (
+                    signal is not None
+                    and guard.signal_add_allowed(direction, i, last_buy, pos.signal_adds)
+                )
+                pnl = pos.realized + sign * pos.size * (bar.close - pos.entry)
+                if signal is not None and allowed:
+                    # A signal add, sized like the first entry.
+                    size = rules.initial_size
+                    pos.buy(bar.time, signal.entry_price, size, rules.leverage, fee_rate)
+                    pos.signal_adds += 1
+                elif guard is not None and guard.strength_add(direction, i, pnl):
+                    # A strength add at the close: a core unit, sized like the first entry.
+                    size = rules.initial_size
+                    pos.buy(bar.time, bar.close, size, rules.leverage, fee_rate, core=True)
         funded = budget is None or budget >= rules.initial_size
         # Flat: the first direction signalling here opens one (both: a long first).
         signal = next(
@@ -552,7 +576,8 @@ def simulate(
         if opens and signal is not None and (start is None or bar.time >= start):
             price = signal.entry_price
             pos = open_at(bar.time, signal.entry_reason, price, _sign(signal.direction))
-            pos.buy(bar.time, price, rules.initial_size, rules.leverage, fee_rate)
+            cored = guard is not None
+            pos.buy(bar.time, price, rules.initial_size, rules.leverage, fee_rate, cored)
             entry, dead = i, False
     if pos is not None and bars:
         trades.append(_close(pos, bars[-1], bars[-1].close, OPEN_AT_END, rules, fee_rate))

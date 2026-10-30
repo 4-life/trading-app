@@ -12,7 +12,15 @@ backtest (app/backtest/averaging.py) use the same.
   backing it (dead_close; before fees and slippage). One that opened beyond that swing waits
   for the next one confirmed after its entry.
 - Broken sell: the position's first exit signal since its entry is ignored
-  while the Supertrend's line is still where it was at the entry."""
+  while the Supertrend's line is still where it was at the entry.
+- Core: the first entry and the strength adds are never unwound
+  (position_management's grid with a core); the dip and signal adds are.
+- Signal adds: at most MAX_SIGNAL_ADDS, each SIGNAL_ADD_SPACING below the
+  last buy at least (a short: above).
+- Strength add: a core unit, sized like the first entry, on the candle the
+  Supertrend flips the position's way (a long: green) with the position in
+  profit at its close.
+- A dead position adds nothing - no dip, signal or strength add."""
 
 from dataclasses import dataclass
 
@@ -22,6 +30,8 @@ from app.executors.swings import find_swings
 
 DEAD_EXIT = "dead_close"  # exit reason: a dead position back up at DEAD_CLOSE_PNL
 DEAD_CLOSE_PNL = -0.001  # a dead position's whole PnL it closes at: -0.1% of its margin
+MAX_SIGNAL_ADDS = 5  # a position's signal adds
+SIGNAL_ADD_SPACING = 0.01  # a signal add's distance below the last buy at least (a short: above)
 
 
 def _sign(direction: str) -> int:
@@ -63,6 +73,19 @@ class KeltnerGuard:
         and that close is beyond its swing."""
         level = self.stop(direction, i, entry, entry_price)
         return level is not None and pnl < 0 and _sign(direction) * (self.closes[i] - level) < 0
+
+    def signal_add_allowed(self, direction: str, i: int, last_buy: float, signal_adds: int) -> bool:
+        """Candle `i`'s signal add (at its close): under MAX_SIGNAL_ADDS so far
+        (`signal_adds`), SIGNAL_ADD_SPACING below the `last_buy` at least."""
+        sign = _sign(direction)
+        level = last_buy * (1 - sign * SIGNAL_ADD_SPACING)
+        return signal_adds < MAX_SIGNAL_ADDS and sign * (self.closes[i] - level) <= 0
+
+    def strength_add(self, direction: str, i: int, pnl: float) -> bool:
+        """The Supertrend flipped the position's way at candle `i`'s close,
+        with its whole PnL there (`pnl`) in profit."""
+        sign = _sign(direction)
+        return i >= 1 and self.trend[i] == sign and self.trend[i - 1] == -sign and pnl > 0
 
     def sell_broken(self, direction: str, i: int, entry: int) -> bool:
         """Candle `i`'s exit signal (a long's Sell, a short's Buy) is the

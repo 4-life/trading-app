@@ -80,13 +80,28 @@ class LiveGuard:
     ) -> bool:
         if self.entry is None:
             return False
-        sign = 1 if direction == "long" else -1
-        close = self.rules.closes[self.last]
-        pnl = float(realized) + sign * float(size) * (close - float(entry_price))
+        pnl = self._pnl(direction, entry_price, size, realized)
         return self.rules.dies(direction, self.last, self.entry, float(first_price), pnl)
 
     def sell_broken(self, direction: Direction) -> bool:
         return self.entry is not None and self.rules.sell_broken(direction, self.last, self.entry)
+
+    def signal_add_allowed(self, direction: Direction, last_buy: Decimal, signal_adds: int) -> bool:
+        return self.rules.signal_add_allowed(direction, self.last, float(last_buy), signal_adds)
+
+    def strength_add(
+        self, direction: Direction, entry_price: Decimal, size: Decimal, realized: Decimal
+    ) -> bool:
+        pnl = self._pnl(direction, entry_price, size, realized)
+        return self.rules.strength_add(direction, self.last, pnl)
+
+    def _pnl(
+        self, direction: Direction, entry_price: Decimal, size: Decimal, realized: Decimal
+    ) -> float:
+        """The position's whole PnL at the last close."""
+        sign = 1 if direction == "long" else -1
+        close = self.rules.closes[self.last]
+        return float(realized) + sign * float(size) * (close - float(entry_price))
 
 
 async def _closed_dead_after(paper: Paper, since: datetime) -> bool:

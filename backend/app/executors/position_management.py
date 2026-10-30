@@ -3,7 +3,7 @@ shared by every executor through the executor loop: averaging down, a
 max-drawdown give-up, and the take-profit floor under the strategy's sell
 signals, from the paper's own parameters. Pure - prices in, a signal out."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from decimal import Decimal
 
 from app.config import settings
@@ -20,6 +20,9 @@ OUT_OF_MARGIN_EXIT = "out_of_margin"
 AVERAGE_DOWN = "average_down"  # a unit added: the margin left fell to ADD_AT_MARGIN_LEFT
 # A unit added at the strategy's entry signal while the position is open.
 SIGNAL_ADD = "signal_add"
+# A unit added as the trend turns the position's way (Keltner: the
+# Supertrend's flip, app/executors/keltner_averaging.py) - a core unit.
+STRENGTH_ADD = "strength_add"
 # An intraday paper with reopen_in_trend: a fresh position opened at the close
 # of the candle its take-profit hit on, while the strategy's own trade (its
 # trend) is still open there.
@@ -45,13 +48,13 @@ DEFAULT_LIQUIDATION_LEFT = settings.maintenance_margin_pct
 
 def add_terms(paper: Paper, reason: str) -> tuple[Decimal, Decimal] | None:
     """An add's (margin, leverage): a signal add - the strategy's entry signal
-    - is sized like the first entry (the initial size at the paper's
+    - and a strength add are sized like the first entry (the initial size at the paper's
     leverage); a dip add - holding off the margin call - at the add size
     (default: the initial size) and the add leverage. None if the paper
     doesn't set them."""
     margin: Decimal | None
     leverage: Decimal | None
-    if reason == SIGNAL_ADD:
+    if reason in (SIGNAL_ADD, STRENGTH_ADD):
         margin, leverage = paper.initial_size_usd, paper.leverage
     else:
         margin = paper.add_size_usd if paper.add_size_usd is not None else paper.initial_size_usd
@@ -147,6 +150,9 @@ def take_profit_sell(
 
 
 # A unit of the grid: (buy price, size) - Decimal live, float in the backtest.
+# With a core (Keltner averaging: its first entry and strength adds, never
+# sold) the other units are all sold - the lowest first - the core counting
+# as their levels; without one, the lowest unit is kept to the close.
 
 
 def held_units[N: (float, Decimal)](
@@ -167,28 +173,54 @@ def held_units[N: (float, Decimal)](
     return units
 
 
-def unwound_unit[N: (float, Decimal)](sign: int, units: list[tuple[N, N]]) -> tuple[N, N] | None:
+def held_grid[N: (float, Decimal)](
+    sign: int, fills: Iterable[tuple[str, N, N, bool]]
+) -> tuple[list[tuple[N, N]], list[tuple[N, N]]]:
+    """held_units with a core: the units still held and the core, from the
+    fills (side, price, size, a core buy - the first, a strength add)."""
+    units: list[tuple[N, N]] = []
+    core: list[tuple[N, N]] = []
+    for side, price, size, is_core in fills:
+        if side == "sell":
+            unit = unwound_unit(sign, units, core)
+            if unit is not None:
+                units.remove(unit)
+        else:
+            (core if is_core else units).append((price, size))
+    return units, core
+
+
+def unwound_unit[N: (float, Decimal)](
+    sign: int, units: list[tuple[N, N]], core: Sequence[tuple[N, N]] = ()
+) -> tuple[N, N] | None:
     """The unit the next unwind sells: the lowest but the lowest - kept to the
-    position's close (a short: mirrored); None with fewer than two."""
+    position's close (a short: mirrored); None with fewer than two. With a
+    `core`: the lowest of `units` (None without any) - the core is never sold."""
+    if core:
+        return min(units, key=lambda unit: sign * unit[0]) if units else None
     if len(units) < 2:
         return None
     return sorted(units, key=lambda unit: sign * unit[0])[1]
 
 
-def unwind_level[N: (float, Decimal)](sign: int, units: list[tuple[N, N]], buffer: N) -> N | None:
-    """The price the next unwind sells at: the next-higher unit's buy price;
-    the highest unit's, half the way from the lowest above it - never under
-    its own price plus `buffer` (unwind_buffer: its fees, slippage, a gain),
-    so no sale loses. None with nothing to sell. A short: mirrored."""
-    unit = unwound_unit(sign, units)
+def unwind_level[N: (float, Decimal)](
+    sign: int, units: list[tuple[N, N]], buffer: N, core: Sequence[tuple[N, N]] = ()
+) -> N | None:
+    """The price the next unwind sells at: the next-higher unit's buy price
+    (the `core`'s too); the highest unit's, half the way from the lowest
+    above it - never under its own price plus `buffer` (unwind_buffer: its
+    fees, slippage, a gain), so no sale loses. None with nothing to sell. A
+    short: mirrored."""
+    unit = unwound_unit(sign, units, core)
     if unit is None:
         return None
     price = unit[0]
-    above = [p for p, _ in units if sign * p > sign * price]
+    every = [p for p, _ in units] + [p for p, _ in core]
+    above = [p for p in every if sign * p > sign * price]
     if above:
         level = min(above, key=lambda p: sign * p)
     else:
-        lowest = min((p for p, _ in units), key=lambda p: sign * p)
+        lowest = min(every, key=lambda p: sign * p)
         level = price + (price - lowest) / 2
     floor = price * (1 + sign * buffer)
     return max(level, floor, key=lambda p: sign * p)
@@ -206,12 +238,13 @@ def next_unwind(
     units: list[tuple[Decimal, Decimal]],
     size: Decimal,
     buffer: Decimal,
+    core: Sequence[tuple[Decimal, Decimal]] = (),
 ) -> Signal | None:
     """The next unwind (unwound_unit, at unwind_level) once `price` is there:
     its unit's share of the position's `size`."""
     sign = 1 if direction == "long" else -1
-    unit = unwound_unit(sign, units)
-    level = unwind_level(sign, units, buffer)
+    unit = unwound_unit(sign, units, core)
+    level = unwind_level(sign, units, buffer, core)
     if unit is None or level is None or sign * (price - level) < 0:
         return None
     return Signal("exit", direction, UNWIND_EXIT, close_fraction=min(unit[1] / size, Decimal(1)))

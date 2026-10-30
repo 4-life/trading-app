@@ -25,9 +25,10 @@ from app.executors.paper_exits import paper_exit, with_paper_levels
 from app.executors.position_management import (
     REOPEN_IN_TREND,
     SIGNAL_ADD,
+    STRENGTH_ADD,
     TAKE_PROFIT_EXIT,
     dead_close,
-    held_units,
+    held_grid,
     managed_signal,
     next_unwind,
     signal_add,
@@ -109,6 +110,17 @@ class Guard(Protocol):
 
     def sell_broken(self, direction: Direction) -> bool:
         """The strategy's sell on that candle is ignored."""
+        ...
+
+    def signal_add_allowed(self, direction: Direction, last_buy: Decimal, signal_adds: int) -> bool:
+        """That candle's signal add may come: `last_buy` the position's last
+        buy price, `signal_adds` its signal adds so far."""
+        ...
+
+    def strength_add(
+        self, direction: Direction, entry_price: Decimal, size: Decimal, realized: Decimal
+    ) -> bool:
+        """A strength add (a core unit) at that candle's close."""
         ...
 
 
@@ -331,21 +343,36 @@ async def _buys(position: Position) -> list[tuple[datetime, Decimal, Decimal]]:
         return [(at, Decimal(price), Decimal(size)) for at, price, size in rows.all()]
 
 
-async def _units(position: Position) -> list[tuple[Decimal, Decimal]]:
-    """The position's units still held (held_units), from its filled orders -
-    buys and partial closes (unwinds), oldest first."""
+@dataclass(frozen=True)
+class _Grid:
+    units: list[tuple[Decimal, Decimal]]  # held, sold by the unwinds
+    core: list[tuple[Decimal, Decimal]]  # held, never sold
+    signal_adds: int
+
+
+async def _grid(position: Position, cored: bool) -> _Grid:
+    """The position's units still held and its core (held_grid; with
+    `cored` - a Guard's - its first entry and strength adds, else none),
+    from its filled orders - buys and partial closes (unwinds), oldest
+    first - and its signal adds."""
     async with async_session() as session:
         rows = await session.execute(
-            select(Order.side, Order.fill_price, Order.size)
+            select(Order.side, Order.fill_price, Order.size, TradingDecision.reason)
+            .outerjoin(TradingDecision, TradingDecision.order_id == Order.id)
             .where(Order.position_id == position.id, Order.fill_price.is_not(None))
             .order_by(Order.created_at, Order.id)
         )
     opening = open_side(position.direction)
-    fills = [
-        ("buy" if side == opening else "sell", Decimal(price), Decimal(size))
-        for side, price, size in rows.all()
-    ]
-    return held_units(1 if position.direction == "long" else -1, fills)
+    fills: list[tuple[str, Decimal, Decimal, bool]] = []
+    signal_adds = 0
+    for side, price, size, reason in rows.all():
+        buy = side == opening
+        first = buy and not any(f[0] == "buy" for f in fills)
+        core = cored and buy and (first or reason == STRENGTH_ADD)
+        signal_adds += buy and reason == SIGNAL_ADD
+        fills.append(("buy" if buy else "sell", Decimal(price), Decimal(size), core))
+    units, core_units = held_grid(1 if position.direction == "long" else -1, fills)
+    return _Grid(units, core_units, signal_adds)
 
 
 async def _averaging(
@@ -353,13 +380,14 @@ async def _averaging(
 ) -> tuple[Signal | None, datetime | None]:
     """An averaging paper's open position (docs/papers.md#averaging-papers) at
     the latest trade price: a dead one's close (its executor's
-    Guard), else its give-up or next add, else selling its lowest
-    unit but the lowest (kept to the close) at the next-higher unit's price
-    (unwind_level), else its take-profit - an
+    Guard), else its give-up or next add (none once dead), else selling its
+    lowest unit but the lowest (kept to the close; with a Guard: but its
+    core) at the next-higher unit's price (unwind_level), else its take-profit - an
     intraday paper's at once, otherwise the strategy's sell once the gain
     has reached it, unless its Guard breaks it (the strategy's other exits
     are off - it holds through the dips), else a signal add - the strategy's
-    entry signal; and when its last buy filled."""
+    entry signal - or its Guard's strength add (none once dead); and when its
+    last buy filled."""
     buys = await _buys(position)
     if not buys:
         return None, None
@@ -398,10 +426,14 @@ async def _averaging(
         paper.max_drawdown_pct,
         None if limits is None else limits.maintenance_margin,
     )
+    # A dead position adds nothing (its Guard).
+    dead = guard is not None and position.dead_at is not None
+    if signal is not None and signal.signal == "add" and dead:
+        signal = None
+    grid = await _grid(position, guard is not None)
     if signal is None:
-        units = await _units(position)
         buffer = unwind_buffer(await taker_fee_rate())
-        signal = next_unwind(direction, price, units, position.size, buffer)
+        signal = next_unwind(direction, price, grid.units, position.size, buffer, grid.core)
     if signal is None and paper.intraday:
         signal = take_profit_close(
             direction,
@@ -426,10 +458,19 @@ async def _averaging(
                 realized,
                 paper.take_profit_pct,
             )
-    if signal is None:
+    if signal is None and not dead:
         # The strategy's entry rule, as if flat - its signal adds a unit.
         entry = await strategy.decide(replace(tick, position=None))
         signal = signal_add(entry, direction)
+        if guard is not None:
+            if signal is not None and not guard.signal_add_allowed(
+                direction, buys[-1][1], grid.signal_adds
+            ):
+                signal = None
+            if signal is None and guard.strength_add(
+                direction, position.entry_price, position.size, realized
+            ):
+                signal = Signal("add", direction, STRENGTH_ADD)
     return signal, buys[-1][0]
 
 
@@ -440,10 +481,11 @@ def add_window(
     add: since the position's last buy and the latest reading (closed candle)
     - a filled one lifts the margin left, so the next comes only when the loss
     catches up again; a rejected one (e.g. no free cash) is retried once per
-    candle, not every pass. A signal add: since the latest reading only - its
-    entry signal holds for the whole candle, so a filled one doesn't stop the
-    next pass from adding again (at most one per candle)."""
-    if reason == SIGNAL_ADD:
+    candle, not every pass. A signal add (a strength add too): since the
+    latest reading only - its entry signal holds for the whole candle, so a
+    filled one doesn't stop the next pass from adding again (at most one per
+    candle)."""
+    if reason in (SIGNAL_ADD, STRENGTH_ADD):
         return reading_at or last_buy_at
     return max((t for t in (last_buy_at, reading_at) if t is not None), default=None)
 

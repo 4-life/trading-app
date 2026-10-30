@@ -18,6 +18,7 @@ from app.executors.position_management import (
     TAKE_PROFIT_EXIT,
     UNWIND_EXIT,
     add_terms,
+    held_grid,
     held_units,
     managed_signal,
     margin_levels,
@@ -275,3 +276,25 @@ def test_a_signal_add_comes_once_per_candle_a_dip_add_once_per_buy() -> None:
     assert add_window(AVERAGE_DOWN, None, reading) == reading
     assert add_window(SIGNAL_ADD, filled, None) == filled
     assert add_window(AVERAGE_DOWN, None, None) is None
+
+
+def test_with_a_core_every_other_unit_sells_at_the_next_higher_price() -> None:
+    core = [(D(100), D(1))]
+    units = [(D(90), D(1)), (D(80), D(1)), (D(105), D(1))]
+    # The lowest first, at the next-higher unit's price - the core's too.
+    assert unwound_unit(1, units, core) == (D(80), D(1))
+    assert unwind_level(1, units, D(0), core) == D(90)
+    assert unwind_level(1, [(D(90), D(1))], D(0), core) == D(100)
+    # Above the core: half the way from the lowest held.
+    assert unwind_level(1, [(D(105), D(1))], D(0), core) == D("107.5")
+    assert unwound_unit(1, [], core) is None
+
+
+def test_held_grid_never_sells_the_core() -> None:
+    fills = [
+        ("buy", D(100), D(1), True),
+        ("buy", D(90), D(1), False),
+        ("sell", D(100), D(1), False),
+        ("buy", D(102), D(1), True),
+    ]
+    assert held_grid(1, fills) == ([], [(D(100), D(1)), (D(102), D(1))])

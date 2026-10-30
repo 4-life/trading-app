@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from app.budget_allocator import free_cash, mode_total
 from app.db import async_session
 from app.execution_engine.models import Order, Position, TradingDecision
-from app.executors.position_management import AVERAGE_DOWN, SIGNAL_ADD
+from app.executors.position_management import AVERAGE_DOWN, SIGNAL_ADD, STRENGTH_ADD
 from app.notifications.telegram import send_telegram
 from app.papers.models import Paper
 
@@ -71,7 +71,7 @@ def trade_message(
     if opened:
         mark = UP if position.direction == "long" else DOWN
         # An add (averaging down) grows the open position; the margin is the whole position's.
-        label = "ADD" if reason in (AVERAGE_DOWN, SIGNAL_ADD) else "OPEN"
+        label = "ADD" if reason in (AVERAGE_DOWN, SIGNAL_ADD, STRENGTH_ADD) else "OPEN"
         lines = [
             f"{mark} {label} {head}",
             f"{position.direction} {amount(size)}",
