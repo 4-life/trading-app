@@ -15,7 +15,7 @@ from sqlalchemy import select
 from app.db import async_session
 from app.execution_engine.models import Position
 from app.executors.base import Tick, direction_allowed, last_entry_at, recent_candles, run
-from app.executors.keltner_averaging import SWING_STOP, KeltnerGuard, keltner_guard
+from app.executors.keltner_averaging import BREAK_EVEN_EXIT, KeltnerGuard, keltner_guard
 from app.executors.keltner_signals import keltner_signals
 from app.feature_engine.engine import INTERVAL_MINUTES
 from app.notifications.error_reporting import run_service
@@ -57,35 +57,34 @@ class LiveGuard:
     rules: KeltnerGuard
     last: int
     entry: int | None  # the open position's entry candle
-    stopped_here: bool  # its last position closed on the swing stop after this candle
+    closed_here: bool  # its last position closed dead after this candle
+    dead_exit: str = BREAK_EVEN_EXIT
 
     def may_open(self, direction: Direction) -> bool:
-        # A swing stop waits for the next signal, not this candle's.
-        return not self.stopped_here and self.rules.may_open(direction, self.last)
+        # A dead position's close waits for the next signal, not this candle's.
+        return not self.closed_here and self.rules.may_open(direction, self.last)
 
-    def swing_exit(
+    def dies(
         self,
         direction: Direction,
         first_price: Decimal,
         entry_price: Decimal,
         size: Decimal,
         realized: Decimal,
-    ) -> Signal | None:
+    ) -> bool:
         if self.entry is None:
-            return None
+            return False
         sign = 1 if direction == "long" else -1
         close = self.rules.closes[self.last]
         pnl = float(realized) + sign * float(size) * (close - float(entry_price))
-        if not self.rules.stopped(direction, self.last, self.entry, float(first_price), pnl):
-            return None
-        return Signal("exit", direction, SWING_STOP)
+        return self.rules.dies(direction, self.last, self.entry, float(first_price), pnl)
 
     def sell_broken(self, direction: Direction) -> bool:
         return self.entry is not None and self.rules.sell_broken(direction, self.last, self.entry)
 
 
-async def _stopped_after(paper: Paper, since: datetime) -> bool:
-    """The paper's last position (in its mode) closed on the swing stop after `since`."""
+async def _closed_dead_after(paper: Paper, since: datetime) -> bool:
+    """The paper's last position (in its mode) closed dead after `since`."""
     async with async_session() as session:
         last = await session.scalar(
             select(Position)
@@ -100,7 +99,7 @@ async def _stopped_after(paper: Paper, since: datetime) -> bool:
     return (
         last is not None
         and last.closed_at is not None
-        and last.exit_reason == SWING_STOP
+        and last.exit_reason == BREAK_EVEN_EXIT
         and last.closed_at >= since
     )
 
@@ -128,8 +127,8 @@ class KeltnerStrategy:
             # The entry candle: the last one closed by the entry.
             closed = [k for k, c in enumerate(candles) if c.open_time + step <= opened_at]
             entry = closed[-1] if closed else 0
-        stopped = await _stopped_after(paper, candles[-1].open_time + step)
-        return LiveGuard(rules, last, entry, stopped)
+        dead = await _closed_dead_after(paper, candles[-1].open_time + step)
+        return LiveGuard(rules, last, entry, dead)
 
     async def before_poll(self, papers: list[Paper], poll_started_at: datetime) -> None:
         return None

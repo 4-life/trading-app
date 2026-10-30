@@ -6,9 +6,11 @@ backtest (app/backtest/averaging.py) use the same.
 - Entry: a Keltner Buy with the Supertrend red opens a long, a Sell with it
   green a short (the paper's Supertrend, as charted: the lower trendline's
   for a long paper, the upper's for the others). Signal adds take any.
-- Swing stop: a position in loss closes once a candle closes below the last
-  confirmed LL (a short: above the last confirmed HH). One that opened
-  beyond that swing waits for the next one confirmed after its entry.
+- Dead: a position in loss whose candle closes below the last confirmed LL
+  (a short: above the last confirmed HH) is dead - it keeps averaging and
+  closes once its whole PnL is back at 0 (break_even_close; the fees and
+  slippage make it about -0.5%). One that opened beyond that swing waits
+  for the next one confirmed after its entry.
 - Broken sell: the position's first exit signal since its entry is ignored
   while the Supertrend's line is still where it was at the entry."""
 
@@ -18,7 +20,7 @@ from app.executors.keltner_signals import keltner_signals
 from app.executors.supertrend import signals as supertrend_signals
 from app.executors.swings import find_swings
 
-SWING_STOP = "swing_stop"  # exit reason: a close beyond the last confirmed LL / HH
+BREAK_EVEN_EXIT = "break_even"  # exit reason: a dead position back at a PnL of 0
 
 
 def _sign(direction: str) -> int:
@@ -55,7 +57,7 @@ class KeltnerGuard:
             return None
         return price
 
-    def stopped(self, direction: str, i: int, entry: int, entry_price: float, pnl: float) -> bool:
+    def dies(self, direction: str, i: int, entry: int, entry_price: float, pnl: float) -> bool:
         """The position's whole PnL at candle `i`'s close (`pnl`) is negative
         and that close is beyond its swing."""
         level = self.stop(direction, i, entry, entry_price)

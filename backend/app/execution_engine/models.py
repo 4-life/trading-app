@@ -71,6 +71,9 @@ class Position(Base):
     close_price: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
     realized_pnl_usd: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
     exit_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    # A dead averaging position (app/executors/keltner_averaging.py): since
+    # when it closes at break-even.
+    dead_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Order(Base):

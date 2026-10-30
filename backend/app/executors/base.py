@@ -26,6 +26,7 @@ from app.executors.position_management import (
     REOPEN_IN_TREND,
     SIGNAL_ADD,
     TAKE_PROFIT_EXIT,
+    break_even_close,
     held_units,
     managed_signal,
     next_unwind,
@@ -84,16 +85,21 @@ class Guard(Protocol):
         """The strategy's entry may open a position."""
         ...
 
-    def swing_exit(
+    def dies(
         self,
         direction: Direction,
         first_price: Decimal,
         entry_price: Decimal,
         size: Decimal,
         realized: Decimal,
-    ) -> Signal | None:
-        """The open position's close at that candle's close - `first_price`
+    ) -> bool:
+        """The open position is dead at that candle's close - `first_price`
         its first buy's."""
+        ...
+
+    @property
+    def dead_exit(self) -> str:
+        """A dead position's exit reason (its break-even close)."""
         ...
 
     def sell_broken(self, direction: Direction) -> bool:
@@ -293,6 +299,17 @@ async def _already_queued(paper: Paper, signal: Signal, switched_off: bool) -> b
     return found is not None
 
 
+async def _mark_dead(position: Position) -> None:
+    """The position is dead from now on (Guard.dies): it closes at break-even."""
+    now = datetime.now(UTC)
+    async with async_session() as session, session.begin():
+        row = await session.get(Position, position.id)
+        if row is not None and row.dead_at is None:
+            row.dead_at = now
+    position.dead_at = now
+    logger.info("paper %d: position %d dead - break-even close", position.paper_id, position.id)
+
+
 async def _buys(position: Position) -> list[tuple[datetime, Decimal, Decimal]]:
     """The position's filled opening orders (its first entry and every add),
     oldest first, as (time, fill price, size)."""
@@ -330,8 +347,8 @@ async def _averaging(
     strategy: Strategy, tick: Tick, position: Position
 ) -> tuple[Signal | None, datetime | None]:
     """An averaging paper's open position (docs/papers.md#averaging-papers) at
-    the latest trade price: its executor's swing stop (its Guard), else its
-    give-up or next add, else selling its lowest
+    the latest trade price: a dead one's break-even close (its executor's
+    Guard), else its give-up or next add, else selling its lowest
     unit but the lowest (kept to the close) at the next-higher unit's price
     (unwind_level), else its take-profit - an
     intraday paper's at once, otherwise the strategy's sell once the gain
@@ -347,11 +364,16 @@ async def _averaging(
     realized = position.realized_pnl_usd or Decimal(0)
     guard = await _guard(strategy, paper, position.opened_at)
     if guard is not None:
-        stop = guard.swing_exit(
+        if position.dead_at is None and guard.dies(
             direction, buys[0][1], position.entry_price, position.size, realized
-        )
-        if stop is not None:
-            return stop, buys[-1][0]
+        ):
+            await _mark_dead(position)
+        if position.dead_at is not None:
+            close = break_even_close(
+                direction, price, position.entry_price, position.size, realized, guard.dead_exit
+            )
+            if close is not None:
+                return close, buys[-1][0]
     # The exchange's maintenance margin: an early liquidation moves the levels up.
     limits = await market_limits(paper.asset)
     signal = managed_signal(

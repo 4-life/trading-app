@@ -76,7 +76,7 @@ from app.backtest.bars import STOP_SLIPPAGE, Bar, Fill, SimTrade, load_bars
 from app.backtest.models import OPEN_AT_END, BacktestFill, BacktestTrade
 from app.config import settings
 from app.db import async_session
-from app.executors.keltner_averaging import SWING_STOP, KeltnerGuard
+from app.executors.keltner_averaging import BREAK_EVEN_EXIT, KeltnerGuard
 from app.executors.position_management import (
     MAX_DRAWDOWN_EXIT,
     OUT_OF_MARGIN_EXIT,
@@ -438,7 +438,7 @@ def simulate(
     sell signals unless `exits` is given; `signals_held`: its long signals
     on any candle (its own trade held or not) - entries and signal adds too;
     `exits`: its exits on any candle (EXIT_SIGNALS) - the sell signals;
-    `guard`: its own rules (GUARDS) - which entries open, its swing stop and
+    `guard`: its own rules (GUARDS) - which entries open, its dead positions and
     its broken sells."""
     directions = rules.directions
     signals: dict[str, dict[datetime, SimTrade]] = {d: {} for d in directions}
@@ -473,8 +473,9 @@ def simulate(
         return Position(time, reason, price, sign, cap(budget), slippage=rules.slippage)
 
     entry = 0  # the open position's entry candle
+    dead = False  # the open position is dead (guard.dies): it closes at break-even
     for i, bar in enumerate(bars):
-        stopped = False  # a swing stop waits for the next signal, not this candle's
+        waits = False  # a dead position's close waits for the next signal, not this candle's
         if pos is not None:
             sign = pos.sign
             direction = "short" if sign == -1 else "long"
@@ -495,6 +496,13 @@ def simulate(
             if guard is not None and guard.sell_broken(direction, i, entry):
                 sell = None
             margin = pos.margin
+            if dead and closed is None and not added:
+                # Back at a PnL of 0 (as live): the price where the whole position's is.
+                target = pos.entry - sign * pos.realized / pos.size
+                if sign * (favourable - target) >= 0:
+                    fill = _better(sign, target, bar.open)
+                    closed = _close(pos, bar, fill, BREAK_EVEN_EXIT, rules, fee_rate)
+                    waits = True
             if rules.intraday:
                 # The take-profit at once: the price where the whole position's PnL
                 # reaches it - not in a candle that added units, as the unwinds.
@@ -509,12 +517,10 @@ def simulate(
                 if pnl >= rules.take_profit * margin:
                     reason = f"{TAKE_PROFIT_EXIT}:{sell.exit_reason}"
                     closed = _close(pos, bar, sell.close_price, reason, rules, fee_rate)
-            if closed is None and guard is not None:
-                # The swing stop at the close: the whole PnL there (as live).
+            if closed is None and guard is not None and not dead:
+                # Dead at the close: the whole PnL there (as live).
                 pnl = pos.realized + sign * pos.size * (bar.close - pos.entry)
-                if guard.stopped(direction, i, entry, pos.first_buy, pnl):
-                    closed = _close(pos, bar, bar.close, SWING_STOP, rules, fee_rate)
-                    stopped = True
+                dead = guard.dies(direction, i, entry, pos.first_buy, pnl)
             if closed is not None:
                 trades.append(closed)
                 pos = None
@@ -526,7 +532,7 @@ def simulate(
                     # The trend still on: a fresh position at the candle's close.
                     pos = open_at(bar.time, REOPEN_IN_TREND, bar.close, sign)
                     pos.buy(bar.time, bar.close, rules.initial_size, rules.leverage, fee_rate)
-                    entry = i
+                    entry, dead = i, False
             elif signal is not None and _can_add(pos, rules.initial_size):
                 # A signal add, sized like the first entry.
                 pos.buy(bar.time, signal.entry_price, rules.initial_size, rules.leverage, fee_rate)
@@ -540,12 +546,12 @@ def simulate(
             ),
             None,
         )
-        opens = pos is None and signal is not None and funded and not stopped
+        opens = pos is None and signal is not None and funded and not waits
         if opens and signal is not None and (start is None or bar.time >= start):
             price = signal.entry_price
             pos = open_at(bar.time, signal.entry_reason, price, _sign(signal.direction))
             pos.buy(bar.time, price, rules.initial_size, rules.leverage, fee_rate)
-            entry = i
+            entry, dead = i, False
     if pos is not None and bars:
         trades.append(_close(pos, bars[-1], bars[-1].close, OPEN_AT_END, rules, fee_rate))
     return trades

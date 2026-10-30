@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.backtest.averaging import Rules, simulate
 from app.backtest.bars import Bar, SimTrade, exit_at
-from app.executors.keltner_averaging import SWING_STOP, KeltnerGuard
+from app.executors.keltner_averaging import BREAK_EVEN_EXIT, KeltnerGuard
 from app.executors.position_management import TAKE_PROFIT_EXIT
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
@@ -54,7 +54,7 @@ def test_a_long_opens_on_a_red_supertrend_only() -> None:
     assert not green.may_open("long", 0)
 
 
-def test_the_swing_stop_is_the_last_confirmed_ll_unless_the_entry_was_below_it() -> None:
+def test_the_dead_line_is_the_last_confirmed_ll_unless_the_entry_was_below_it() -> None:
     g = _guard([100.0] * 6, lows={1: 98.0, 4: 85.0})
     assert g.stop("long", 2, 2, 100.0) == 98.0
     # Opened at 90, under the LL at 98: broken - none until the next LL.
@@ -62,11 +62,11 @@ def test_the_swing_stop_is_the_last_confirmed_ll_unless_the_entry_was_below_it()
     assert g.stop("long", 4, 2, 90.0) == 85.0
 
 
-def test_the_swing_stop_needs_a_close_below_it_and_a_loss() -> None:
+def test_a_position_dies_on_a_close_below_it_in_loss() -> None:
     g = _guard([100.0, 97.0], lows={0: 98.0})
-    assert g.stopped("long", 1, 0, 100.0, pnl=-3.0)
-    assert not g.stopped("long", 1, 0, 100.0, pnl=1.0)
-    assert not g.stopped("long", 0, 0, 100.0, pnl=-3.0)  # the close at 100
+    assert g.dies("long", 1, 0, 100.0, pnl=-3.0)
+    assert not g.dies("long", 1, 0, 100.0, pnl=1.0)
+    assert not g.dies("long", 0, 0, 100.0, pnl=-3.0)  # the close at 100
 
 
 def test_the_first_sell_is_broken_while_the_supertrend_line_stays() -> None:
@@ -85,15 +85,16 @@ def test_the_backtest_opens_on_red_only() -> None:
     assert t.opened_at == T0 + timedelta(hours=1)
 
 
-def test_the_backtest_swing_stop_then_waits_for_the_next_signal() -> None:
-    closes = [100.0, 99.0, 97.0, 98.0]
+def test_the_backtest_keeps_a_dead_position_and_closes_it_at_break_even() -> None:
+    # Dead at 2 (97 under the LL at 98, in loss); 99 at 3 isn't back at 100;
+    # 4 trades up to 100.5: closed at 100, the PnL at 0. Its Buy at 4 waits.
+    closes = [100.0, 99.0, 97.0, 99.0, 100.0, 100.0]
     g = _guard(closes, lows={1: 98.0})
-    signals = [_buy(0, 100), _buy(2, 97), _buy(3, 98)]
-    stopped, reopened = simulate(_bars(closes), [], RULES, signals_held=signals, guard=g)
-    assert (stopped.closed_at, stopped.exit_reason) == (T0 + timedelta(hours=2), SWING_STOP)
-    assert stopped.close_price == 97.0
-    # Not on the stop's candle (its Buy at 2), on the next signal.
-    assert reopened.opened_at == T0 + timedelta(hours=3)
+    signals = [_buy(0, 100), _buy(4, 100), _buy(5, 100)]
+    dead, reopened = simulate(_bars(closes), [], RULES, signals_held=signals, guard=g)
+    assert (dead.closed_at, dead.exit_reason) == (T0 + timedelta(hours=4), BREAK_EVEN_EXIT)
+    assert dead.close_price == 100.0
+    assert reopened.opened_at == T0 + timedelta(hours=5)
 
 
 def test_the_backtest_passes_the_broken_first_sell() -> None:
