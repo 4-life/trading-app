@@ -15,7 +15,12 @@ from sqlalchemy import select
 from app.db import async_session
 from app.execution_engine.models import Position
 from app.executors.base import Tick, direction_allowed, last_entry_at, recent_candles, run
-from app.executors.keltner_averaging import BREAK_EVEN_EXIT, KeltnerGuard, keltner_guard
+from app.executors.keltner_averaging import (
+    DEAD_CLOSE_PNL_USD,
+    DEAD_EXIT,
+    KeltnerGuard,
+    keltner_guard,
+)
 from app.executors.keltner_signals import keltner_signals
 from app.feature_engine.engine import INTERVAL_MINUTES
 from app.notifications.error_reporting import run_service
@@ -58,7 +63,8 @@ class LiveGuard:
     last: int
     entry: int | None  # the open position's entry candle
     closed_here: bool  # its last position closed dead after this candle
-    dead_exit: str = BREAK_EVEN_EXIT
+    dead_exit: str = DEAD_EXIT
+    dead_floor: Decimal = Decimal(str(DEAD_CLOSE_PNL_USD))
 
     def may_open(self, direction: Direction) -> bool:
         # A dead position's close waits for the next signal, not this candle's.
@@ -99,7 +105,7 @@ async def _closed_dead_after(paper: Paper, since: datetime) -> bool:
     return (
         last is not None
         and last.closed_at is not None
-        and last.exit_reason == BREAK_EVEN_EXIT
+        and last.exit_reason == DEAD_EXIT
         and last.closed_at >= since
     )
 

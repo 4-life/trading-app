@@ -76,7 +76,7 @@ from app.backtest.bars import STOP_SLIPPAGE, Bar, Fill, SimTrade, load_bars
 from app.backtest.models import OPEN_AT_END, BacktestFill, BacktestTrade
 from app.config import settings
 from app.db import async_session
-from app.executors.keltner_averaging import BREAK_EVEN_EXIT, KeltnerGuard
+from app.executors.keltner_averaging import DEAD_CLOSE_PNL_USD, DEAD_EXIT, KeltnerGuard
 from app.executors.position_management import (
     MAX_DRAWDOWN_EXIT,
     OUT_OF_MARGIN_EXIT,
@@ -473,7 +473,7 @@ def simulate(
         return Position(time, reason, price, sign, cap(budget), slippage=rules.slippage)
 
     entry = 0  # the open position's entry candle
-    dead = False  # the open position is dead (guard.dies): it closes at break-even
+    dead = False  # the open position is dead (guard.dies): it closes at DEAD_CLOSE_PNL_USD
     for i, bar in enumerate(bars):
         waits = False  # a dead position's close waits for the next signal, not this candle's
         if pos is not None:
@@ -497,11 +497,12 @@ def simulate(
                 sell = None
             margin = pos.margin
             if dead and closed is None and not added:
-                # Back at a PnL of 0 (as live): the price where the whole position's is.
-                target = pos.entry - sign * pos.realized / pos.size
+                # Back up at DEAD_CLOSE_PNL_USD (as live): the price where the whole
+                # position's PnL is.
+                target = pos.entry + sign * (DEAD_CLOSE_PNL_USD - pos.realized) / pos.size
                 if sign * (favourable - target) >= 0:
                     fill = _better(sign, target, bar.open)
-                    closed = _close(pos, bar, fill, BREAK_EVEN_EXIT, rules, fee_rate)
+                    closed = _close(pos, bar, fill, DEAD_EXIT, rules, fee_rate)
                     waits = True
             if rules.intraday:
                 # The take-profit at once: the price where the whole position's PnL

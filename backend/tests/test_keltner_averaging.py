@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.backtest.averaging import Rules, simulate
 from app.backtest.bars import Bar, SimTrade, exit_at
-from app.executors.keltner_averaging import BREAK_EVEN_EXIT, KeltnerGuard
+from app.executors.keltner_averaging import DEAD_EXIT, KeltnerGuard
 from app.executors.position_management import TAKE_PROFIT_EXIT
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
@@ -85,15 +85,19 @@ def test_the_backtest_opens_on_red_only() -> None:
     assert t.opened_at == T0 + timedelta(hours=1)
 
 
-def test_the_backtest_keeps_a_dead_position_and_closes_it_at_break_even() -> None:
-    # Dead at 2 (97 under the LL at 98, in loss); 99 at 3 isn't back at 100;
-    # 4 trades up to 100.5: closed at 100, the PnL at 0. Its Buy at 4 waits.
-    closes = [100.0, 99.0, 97.0, 99.0, 100.0, 100.0]
+def test_the_backtest_keeps_a_dead_position_and_closes_it_back_up_at_the_floor() -> None:
+    # $1,000 at 100 (10 units of size): dead at 2 (97 under the LL at 98,
+    # -$30); 97.5 at 3 isn't back up at -$20 (98); 4 opens at 99: closed
+    # there. Its Buy at 4 waits.
+    rules = Rules(10, 100, 3, 100, 0.3, 0.4, 0.2)
+    closes = [100.0, 99.0, 97.0, 97.5, 99.0, 99.0]
+    bars = _bars(closes)
+    bars[3] = Bar(bars[3].time, 97.0, 97.9, 97.0, 97.5)
     g = _guard(closes, lows={1: 98.0})
-    signals = [_buy(0, 100), _buy(4, 100), _buy(5, 100)]
-    dead, reopened = simulate(_bars(closes), [], RULES, signals_held=signals, guard=g)
-    assert (dead.closed_at, dead.exit_reason) == (T0 + timedelta(hours=4), BREAK_EVEN_EXIT)
-    assert dead.close_price == 100.0
+    signals = [_buy(0, 100), _buy(4, 99), _buy(5, 99)]
+    dead, reopened = simulate(bars, [], rules, signals_held=signals, guard=g)
+    assert (dead.closed_at, dead.exit_reason) == (T0 + timedelta(hours=4), DEAD_EXIT)
+    assert dead.close_price == 99.0
     assert reopened.opened_at == T0 + timedelta(hours=5)
 
 

@@ -6,7 +6,8 @@ Create Date: 2026-10-30
 
 `positions.dead_at` - since when a Keltner averaging position is dead (a
 close beyond the last confirmed LL / HH in loss): it keeps averaging and
-closes at break-even (app/executors/keltner_averaging.py). NULL: alive.
+closes once its PnL is back up at DEAD_CLOSE_PNL_USD
+(app/executors/keltner_averaging.py). NULL: alive.
 """
 
 from collections.abc import Sequence

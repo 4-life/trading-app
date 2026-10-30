@@ -26,7 +26,7 @@ from app.executors.position_management import (
     REOPEN_IN_TREND,
     SIGNAL_ADD,
     TAKE_PROFIT_EXIT,
-    break_even_close,
+    dead_close,
     held_units,
     managed_signal,
     next_unwind,
@@ -99,7 +99,12 @@ class Guard(Protocol):
 
     @property
     def dead_exit(self) -> str:
-        """A dead position's exit reason (its break-even close)."""
+        """A dead position's exit reason."""
+        ...
+
+    @property
+    def dead_floor(self) -> Decimal:
+        """The whole PnL (USD) a dead position closes at."""
         ...
 
     def sell_broken(self, direction: Direction) -> bool:
@@ -300,14 +305,14 @@ async def _already_queued(paper: Paper, signal: Signal, switched_off: bool) -> b
 
 
 async def _mark_dead(position: Position) -> None:
-    """The position is dead from now on (Guard.dies): it closes at break-even."""
+    """The position is dead from now on (Guard.dies): it closes at Guard.dead_floor."""
     now = datetime.now(UTC)
     async with async_session() as session, session.begin():
         row = await session.get(Position, position.id)
         if row is not None and row.dead_at is None:
             row.dead_at = now
     position.dead_at = now
-    logger.info("paper %d: position %d dead - break-even close", position.paper_id, position.id)
+    logger.info("paper %d: position %d is dead", position.paper_id, position.id)
 
 
 async def _buys(position: Position) -> list[tuple[datetime, Decimal, Decimal]]:
@@ -347,7 +352,7 @@ async def _averaging(
     strategy: Strategy, tick: Tick, position: Position
 ) -> tuple[Signal | None, datetime | None]:
     """An averaging paper's open position (docs/papers.md#averaging-papers) at
-    the latest trade price: a dead one's break-even close (its executor's
+    the latest trade price: a dead one's close (its executor's
     Guard), else its give-up or next add, else selling its lowest
     unit but the lowest (kept to the close) at the next-higher unit's price
     (unwind_level), else its take-profit - an
@@ -369,8 +374,14 @@ async def _averaging(
         ):
             await _mark_dead(position)
         if position.dead_at is not None:
-            close = break_even_close(
-                direction, price, position.entry_price, position.size, realized, guard.dead_exit
+            close = dead_close(
+                direction,
+                price,
+                position.entry_price,
+                position.size,
+                realized,
+                guard.dead_floor,
+                guard.dead_exit,
             )
             if close is not None:
                 return close, buys[-1][0]

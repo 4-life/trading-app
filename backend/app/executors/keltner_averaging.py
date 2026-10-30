@@ -8,8 +8,8 @@ backtest (app/backtest/averaging.py) use the same.
   for a long paper, the upper's for the others). Signal adds take any.
 - Dead: a position in loss whose candle closes below the last confirmed LL
   (a short: above the last confirmed HH) is dead - it keeps averaging and
-  closes once its whole PnL is back at 0 (break_even_close; the fees and
-  slippage make it about -0.5%). One that opened beyond that swing waits
+  closes once its whole PnL is back up at DEAD_CLOSE_PNL_USD (dead_close;
+  before fees and slippage). One that opened beyond that swing waits
   for the next one confirmed after its entry.
 - Broken sell: the position's first exit signal since its entry is ignored
   while the Supertrend's line is still where it was at the entry."""
@@ -20,7 +20,8 @@ from app.executors.keltner_signals import keltner_signals
 from app.executors.supertrend import signals as supertrend_signals
 from app.executors.swings import find_swings
 
-BREAK_EVEN_EXIT = "break_even"  # exit reason: a dead position back at a PnL of 0
+DEAD_EXIT = "dead_close"  # exit reason: a dead position back up at DEAD_CLOSE_PNL_USD
+DEAD_CLOSE_PNL_USD = -20.0  # a dead position's whole PnL it closes at
 
 
 def _sign(direction: str) -> int:

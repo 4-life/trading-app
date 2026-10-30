@@ -107,17 +107,19 @@ def take_profit_close(
     return Signal("exit", direction, TAKE_PROFIT_EXIT)
 
 
-def break_even_close(
+def dead_close(
     direction: Direction,
     price: Decimal,
     entry_price: Decimal,
     size: Decimal,
     realized: Decimal,
+    floor: Decimal,
     reason: str,
 ) -> Signal | None:
     """A dead position's close (app/executors/keltner_averaging.py): as soon
-    as its whole PnL at `price` is back at 0."""
-    if not _profit_reached(direction, price, entry_price, size, Decimal(0), realized, Decimal(0)):
+    as its whole PnL at `price` is back up at `floor` (USD)."""
+    sign = 1 if direction == "long" else -1
+    if realized + sign * size * (price - entry_price) < floor:
         return None
     return Signal("exit", direction, reason)
 
