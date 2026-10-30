@@ -72,7 +72,7 @@ class Position(Base):
     realized_pnl_usd: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
     exit_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     # A dead averaging position (app/executors/keltner_averaging.py): since
-    # when it closes once its PnL is back up at DEAD_CLOSE_PNL_USD.
+    # when it closes once its PnL is back up at DEAD_CLOSE_PNL.
     dead_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

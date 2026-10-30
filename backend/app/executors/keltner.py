@@ -16,7 +16,7 @@ from app.db import async_session
 from app.execution_engine.models import Position
 from app.executors.base import Tick, direction_allowed, last_entry_at, recent_candles, run
 from app.executors.keltner_averaging import (
-    DEAD_CLOSE_PNL_USD,
+    DEAD_CLOSE_PNL,
     DEAD_EXIT,
     KeltnerGuard,
     keltner_guard,
@@ -64,7 +64,7 @@ class LiveGuard:
     entry: int | None  # the open position's entry candle
     closed_here: bool  # its last position closed dead after this candle
     dead_exit: str = DEAD_EXIT
-    dead_floor: Decimal = Decimal(str(DEAD_CLOSE_PNL_USD))
+    dead_floor: Decimal = Decimal(str(DEAD_CLOSE_PNL))
 
     def may_open(self, direction: Direction) -> bool:
         # A dead position's close waits for the next signal, not this candle's.

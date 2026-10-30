@@ -112,14 +112,14 @@ def dead_close(
     price: Decimal,
     entry_price: Decimal,
     size: Decimal,
+    margin: Decimal,
     realized: Decimal,
     floor: Decimal,
     reason: str,
 ) -> Signal | None:
     """A dead position's close (app/executors/keltner_averaging.py): as soon
-    as its whole PnL at `price` is back up at `floor` (USD)."""
-    sign = 1 if direction == "long" else -1
-    if realized + sign * size * (price - entry_price) < floor:
+    as its whole PnL at `price` is back up at `floor` of the margin backing it."""
+    if not _profit_reached(direction, price, entry_price, size, margin, realized, floor):
         return None
     return Signal("exit", direction, reason)
 

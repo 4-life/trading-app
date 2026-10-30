@@ -104,7 +104,7 @@ class Guard(Protocol):
 
     @property
     def dead_floor(self) -> Decimal:
-        """The whole PnL (USD) a dead position closes at."""
+        """The whole PnL a dead position closes at, a share of its margin."""
         ...
 
     def sell_broken(self, direction: Direction) -> bool:
@@ -379,6 +379,7 @@ async def _averaging(
                 price,
                 position.entry_price,
                 position.size,
+                position.margin_usd,
                 realized,
                 guard.dead_floor,
                 guard.dead_exit,

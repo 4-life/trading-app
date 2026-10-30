@@ -6,7 +6,7 @@ Create Date: 2026-10-30
 
 `positions.dead_at` - since when a Keltner averaging position is dead (a
 close beyond the last confirmed LL / HH in loss): it keeps averaging and
-closes once its PnL is back up at DEAD_CLOSE_PNL_USD
+closes once its PnL is back up at DEAD_CLOSE_PNL
 (app/executors/keltner_averaging.py). NULL: alive.
 """
 
