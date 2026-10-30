@@ -17,7 +17,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { Checkbox } from '@/components/ui/checkbox';
 import { formatDateTime, formatPrice, formatUsd, pnlPercent, priceDigits } from '@/lib/format';
-import type { BandPoint, CandleChunk, ChartSwing, LiquidityZone, PaperChart, SwingKind, VwapPoint } from '@/types/chart';
+import type { BandPoint, CandleChunk, ChartSwing, PaperChart, SwingKind, VwapPoint } from '@/types/chart';
 
 import { fetchCandleChunk } from './api';
 import { addCount, positionValue, stateAt, unitProfits } from './backtest';
@@ -39,7 +39,6 @@ const MUTED = '#8b8b8b';
 const VIOLET = '#a855f7';
 const CYAN = '#06b6d4'; // an averaging backtest's unwinds - no candle shares it
 const GRID = 'rgba(139, 139, 139, 0.15)';
-const ZONE_FILL = { low: 'rgba(34, 197, 94, 0.25)', high: 'rgba(239, 68, 68, 0.25)' };
 
 const SWING_COLOR: Record<SwingKind, string> = {
   HH: GREEN,
@@ -95,7 +94,7 @@ type InfoRow = { text: string; color?: string };
 
 // What the crosshair's candle shows (top-left box): the candle, the swings
 // made on it, the swing levels known at it (the last confirmed swing of
-// each kind, the latest liquidity zone) and EMA 9 / VWAP with its signal.
+// each kind) and EMA 9 / VWAP with its signal.
 function infoAt(chart: PaperChart, t: number): InfoRow[] {
   const rows: InfoRow[] = [];
   const candle = chart.candles.find((c) => sec(c.time) === t);
@@ -110,24 +109,13 @@ function infoAt(chart: PaperChart, t: number): InfoRow[] {
   for (const s of chart.swings.filter((x) => sec(x.time) === t)) {
     rows.push({ text: `${s.kind} made here ${formatPrice(s.price)}`, color: SWING_COLOR[s.kind] });
   }
-  // A swing / zone counts once the candle that confirmed it has closed - by this candle's close.
+  // A swing counts once the candle that confirmed it has closed - by this candle's close.
   const known = (confirmedAt: string) => sec(confirmedAt) <= t;
   const levels = (['HH', 'HL', 'LH', 'LL'] as const).flatMap((kind) => {
     const last = chart.swings.filter((x) => x.kind === kind && known(x.confirmed_at)).at(-1);
     return last ? [`${kind} ${formatPrice(last.price)}`] : [];
   });
   if (levels.length > 0) rows.push({ text: `levels: ${levels.join(' · ')}` });
-  for (const kind of ['low', 'high'] as const) {
-    const zone = chart.liquidity_zones
-      .filter((z) => z.kind === kind && known(z.confirmed_at))
-      .at(-1);
-    if (zone) {
-      rows.push({
-        text: `${kind === 'low' ? 'green' : 'red'} zone ${formatPrice(zone.btm)}–${formatPrice(zone.top)}`,
-        color: kind === 'low' ? GREEN : RED,
-      });
-    }
-  }
   const line = chart.vwap.find((p) => sec(p.time) === t);
   if (line) {
     rows.push({
@@ -384,16 +372,6 @@ function draw(api: IChartApi, chart: PaperChart): (data: PaperChart) => void {
         ),
       );
     }
-    // Liquidity swing zones: the pivot candle across its count.
-    for (const z of data.liquidity_zones) {
-      attach(
-        new Rectangle(
-          { time: sec(z.start) as UTCTimestamp, price: z.top },
-          { time: sec(z.end) as UTCTimestamp, price: z.btm },
-          ZONE_FILL[z.kind === 'low' ? 'low' : 'high'],
-        ),
-      );
-    }
 
     // Trades: entry -> exit (an open position -> now), dashed, long green, short red.
     const lastTime = times.at(-1) ?? first;
@@ -607,7 +585,7 @@ interface Older extends CandleChunk {
 }
 
 // `chart` with the older candles and their overlays before its first. A
-// swing or zone near a chunk's end can come twice (the chunk after it or the
+// swing near a chunk's end can come twice (the chunk after it or the
 // first window has it too - computed the same way): kept once.
 function withOlder(chart: PaperChart, older: Older): PaperChart {
   const first = chart.candles[0];
@@ -616,7 +594,6 @@ function withOlder(chart: PaperChart, older: Older): PaperChart {
   }
   const before = (x: { time: string }) => sec(x.time) < sec(first.time);
   const swingKey = (s: ChartSwing) => `${s.kind} ${String(sec(s.time))}`;
-  const zoneKey = (z: LiquidityZone) => `${z.kind} ${String(sec(z.start))}`;
   const unique = <T,>(items: T[], key: (x: T) => string, had: T[]): T[] => {
     const seen = new Set(had.map(key));
     return items.filter((x) => {
@@ -629,7 +606,6 @@ function withOlder(chart: PaperChart, older: Older): PaperChart {
     });
   };
   const swings = unique(older.swings, swingKey, chart.swings);
-  const zones = unique(older.liquidity_zones, zoneKey, chart.liquidity_zones);
   return {
     ...chart,
     candles: [...older.candles.filter(before), ...chart.candles],
@@ -638,7 +614,6 @@ function withOlder(chart: PaperChart, older: Older): PaperChart {
     supertrend: [...older.supertrend.filter(before), ...chart.supertrend],
     keltner: [...older.keltner.filter(before), ...chart.keltner],
     swings: [...swings, ...chart.swings],
-    liquidity_zones: [...zones, ...chart.liquidity_zones],
   };
 }
 
@@ -648,7 +623,6 @@ function withoutHidden(chart: PaperChart, hidden: Set<Indicator>): PaperChart {
   return {
     ...chart,
     swings: hidden.has('swings') ? [] : chart.swings,
-    liquidity_zones: hidden.has('zones') ? [] : chart.liquidity_zones,
     vwap: hidden.has('vwap') ? [] : chart.vwap,
     bands: hidden.has('bands') ? [] : chart.bands,
     supertrend: hidden.has('supertrend') ? [] : chart.supertrend,
@@ -689,7 +663,6 @@ export default function StrategyChart({ chart }: { chart: PaperChart }) {
         supertrend: [],
         keltner: [],
         swings: [],
-        liquidity_zones: [],
         done: false,
       };
     }
@@ -733,7 +706,6 @@ export default function StrategyChart({ chart }: { chart: PaperChart }) {
           kept.supertrend = [...chunk.supertrend, ...kept.supertrend];
           kept.keltner = [...chunk.keltner, ...kept.keltner];
           kept.swings = [...chunk.swings, ...kept.swings];
-          kept.liquidity_zones = [...chunk.liquidity_zones, ...kept.liquidity_zones];
           kept.done = chunk.candles.length < limit;
           data = withoutHidden(withOlder(chart, kept), hidden);
           repaint(data);

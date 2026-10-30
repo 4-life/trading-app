@@ -1,5 +1,5 @@
 """One paper's chart: candles at its timeframe, its positions with every fill,
-and the swing labels (docs/api.md). The overlays (swings, zones, VWAP, trend
+and the swing labels (docs/api.md). The overlays (swings, VWAP, trend
 bands, Supertrend, Keltner signals) are computed in a worker thread - the event loop keeps
 answering meanwhile - and cached until the next candle closes."""
 
@@ -25,7 +25,6 @@ from app.execution_engine.demo import unrealized_pnl
 from app.execution_engine.models import Order, Position, TradingDecision
 from app.executors.keltner import KeltnerStrategy
 from app.executors.keltner_signals import keltner_signals
-from app.executors.liquidity_swings import liquidity_zones
 from app.executors.supertrend import signals as supertrend_signals
 from app.executors.swings import find_swings
 from app.executors.trend_bands import CALC_BARS, trend_bands
@@ -71,15 +70,6 @@ class CandleOut(BaseModel):
     high: Decimal
     low: Decimal
     close: Decimal
-
-
-class LiquidityZoneOut(BaseModel):
-    kind: str  # low (green swing) | high (red swing)
-    start: datetime  # the pivot candle's open time
-    end: datetime  # start + its count of candles, like the indicator's box
-    top: float
-    btm: float
-    confirmed_at: datetime  # open time of the candle that confirmed it
 
 
 class SwingOut(BaseModel):
@@ -184,7 +174,6 @@ class PaperChartOut(BaseModel):
     kind: str
     candles: list[CandleOut]
     swings: list[SwingOut]
-    liquidity_zones: list[LiquidityZoneOut]  # confirmed ones
     # VWAP + EMA 9 and their BUY / SELL per closed candle.
     vwap: list[VwapPointOut]
     # BigBeluga trend bands and their break signals per closed candle.
@@ -275,28 +264,11 @@ async def _entry_reasons(position_ids: list[int]) -> dict[int, str]:
         return {pid: reason for pid, reason in rows.all() if pid is not None}
 
 
-def _swings_and_zones(
-    series: list[ChartCandle], keep: range
-) -> tuple[list[SwingOut], list[LiquidityZoneOut]]:
-    """The swings and the confirmed liquidity zones found over `series`
-    (closed candles), those pivoting on the candles in `keep`."""
+def _swings(series: list[ChartCandle], keep: range) -> list[SwingOut]:
+    """The swings found over `series` (closed candles), those pivoting on the
+    candles in `keep`."""
     highs, lows = [float(c.high) for c in series], [float(c.low) for c in series]
-    zones: list[LiquidityZoneOut] = []
-    for z in liquidity_zones(highs, lows, [float(c.close) for c in series]):
-        if z.confirm_index is None or z.pivot_index not in keep:
-            continue
-        end = min(z.pivot_index + max(z.count, 1), len(series) - 1)
-        zones.append(
-            LiquidityZoneOut(
-                kind=z.kind,
-                start=series[z.pivot_index].open_time,
-                end=series[end].open_time,
-                top=z.top,
-                btm=z.btm,
-                confirmed_at=series[z.confirm_index].open_time,
-            )
-        )
-    swings = [
+    return [
         SwingOut(
             kind=s.kind,
             price=s.price,
@@ -306,7 +278,6 @@ def _swings_and_zones(
         for s in find_swings(highs, lows)
         if s.pivot_index in keep
     ]
-    return swings, zones
 
 
 def _supertrend(direction: str, series: list[ChartCandle], keep: range) -> list[SupertrendPointOut]:
@@ -375,7 +346,6 @@ def _bands(series: list[ChartCandle], keep: range) -> list[BandPointOut]:
 @dataclass(frozen=True)
 class _Overlays:
     swings: list[SwingOut]
-    zones: list[LiquidityZoneOut]
     vwap: list[VwapPointOut]
     bands: list[BandPointOut]
     supertrend: list[SupertrendPointOut]
@@ -413,11 +383,9 @@ def _overlays(
     signals over the `older` history (their state depends on the whole
     path), on the window's candles.
     CPU-bound - run in a worker thread."""
-    swings, zones = _swings_and_zones(closed, range(len(closed)))
     keep = range(len(older) - len(closed), len(older))
     return _Overlays(
-        swings,
-        zones,
+        _swings(closed, range(len(closed))),
         _vwap(closed),
         _bands(older, keep),
         _supertrend(direction, older, keep),
@@ -527,7 +495,7 @@ async def paper_chart(
     overlays = (
         await _cached_overlays(paper, closed, history[:-1])
         if closed
-        else _Overlays([], [], [], [], [], [])
+        else _Overlays([], [], [], [], [])
     )
 
     last_close = candles[-1].close if candles else None
@@ -553,7 +521,6 @@ async def paper_chart(
         kind=paper.kind,
         candles=candles_out,
         swings=overlays.swings,
-        liquidity_zones=overlays.zones,
         vwap=overlays.vwap,
         bands=overlays.bands,
         supertrend=overlays.supertrend,
@@ -603,7 +570,7 @@ async def paper_chart(
     )
 
 
-# Candles after an older chunk that confirm the swings and zones pivoting at
+# Candles after an older chunk that confirm the swings pivoting at
 # its end (the chart already has them).
 CHUNK_OVERLAP = 200
 
@@ -617,7 +584,6 @@ class CandleChunkOut(BaseModel):
     supertrend: list[SupertrendPointOut]  # every paper's
     keltner: list[KeltnerPointOut]  # a Keltner paper's
     swings: list[SwingOut]  # pivoting in the chunk
-    liquidity_zones: list[LiquidityZoneOut]  # pivoting in the chunk, confirmed
 
 
 def _chunk_overlays(
@@ -631,7 +597,7 @@ def _chunk_overlays(
     confirming its last swings). CPU-bound - run in a worker thread."""
     series = [*warmup, *chunk]
     keep = range(len(warmup), len(series))
-    swings, zones = _swings_and_zones([*series, *after], keep)
+    swings = _swings([*series, *after], keep)
     closes = [float(c.close) for c in series]
     ln = lines(
         [c.open_time for c in series],
@@ -651,7 +617,6 @@ def _chunk_overlays(
     ]
     return _Overlays(
         swings,
-        zones,
         vwap,
         _bands(series, keep),
         _supertrend(direction, series, keep),
@@ -665,8 +630,8 @@ async def paper_candles(
 ) -> CandleChunkOut:
     """The `limit` candles before `before` (oldest first) - the strategy
     chart's older history, loaded as it scrolls back - with every overlay of
-    the first window on them: VWAP + EMA 9, the trend bands, swings and
-    liquidity zones, computed from CALC_BARS candles before the chunk (and
+    the first window on them: VWAP + EMA 9, the trend bands and the swings,
+    computed from CALC_BARS candles before the chunk (and
     CHUNK_OVERLAP after it, confirming the swings at its end). Empty: no
     older candles."""
     async with async_session() as session:
@@ -682,7 +647,6 @@ async def paper_candles(
                 supertrend=[],
                 keltner=[],
                 swings=[],
-                liquidity_zones=[],
             )
         warmup = await _load_candles(session, paper, CALC_BARS, before=chunk[0].open_time)
         after = await _load_candles(session, paper, CHUNK_OVERLAP, since=before, oldest=True)
@@ -697,5 +661,4 @@ async def paper_candles(
         supertrend=overlays.supertrend,
         keltner=overlays.keltner,
         swings=overlays.swings,
-        liquidity_zones=overlays.zones,
     )

@@ -83,16 +83,6 @@ export interface BacktestFill {
   pnl_usd: number; // at this buy's price, before fees
 }
 
-// A confirmed LuxAlgo liquidity swing zone (every chart).
-export interface LiquidityZone {
-  kind: "low" | "high";
-  start: string;
-  end: string;
-  top: number;
-  btm: number;
-  confirmed_at: string;
-}
-
 export interface VwapPoint {
   time: string;
   vwap: number | null; // null before the chart's first full session
@@ -131,7 +121,6 @@ export interface PaperChart {
   kind: Paper["kind"];
   candles: ChartCandle[];
   swings: ChartSwing[];
-  liquidity_zones: LiquidityZone[];
   vwap: VwapPoint[]; // VWAP + EMA 9 and their signals (every chart)
   bands: BandPoint[];
   supertrend: SupertrendPoint[]; // every paper's
@@ -149,5 +138,4 @@ export interface CandleChunk {
   supertrend: SupertrendPoint[];
   keltner: KeltnerPoint[];
   swings: ChartSwing[]; // pivoting in the chunk
-  liquidity_zones: LiquidityZone[];
 }

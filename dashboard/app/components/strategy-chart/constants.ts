@@ -9,7 +9,6 @@ export const FORCED_EXITS: readonly string[] = ["liquidation", "max_drawdown", "
 // are kept in this browser under HIDDEN_INDICATORS_KEY (hooks/use-hidden-indicators.ts).
 export const INDICATORS = [
   ["swings", "Swings"],
-  ["zones", "Liquidity zones"],
   ["vwap", "VWAP + EMA 9"],
   ["bands", "Trend bands"],
   ["supertrend", "Supertrend"],

@@ -27,7 +27,7 @@ A port of LuxAlgo's "Liquidity Swings" with Pivot Lookback **14**, Swing Area **
 - Each later candle that trades into the zone adds 1 to its count; Pine looks 14 candles back, so the count trails by 14 candles.
 - A swing is **confirmed** on the candle where its count first exceeds 1 — when the indicator shows its label. That's usually about 16 candles after the pivot.
 - A close beyond the zone (below a green swing, above a red one) **breaks** it.
-- The [chart](dashboard.md#strategy-chart) draws confirmed zones as transparent green / red rectangles, from the pivot candle across its count.
+- Not drawn on the [chart](dashboard.md#strategy-chart) any more; its pivots are the [trendlines](#trendlines-with-breaks)' and the trend bands'.
 
 ## Trendlines with Breaks
 
