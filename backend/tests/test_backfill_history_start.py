@@ -99,11 +99,14 @@ def test_funding_from_its_history_start_covers_a_range_reaching_before_it() -> N
 
 
 def _run_funding(
-    monkeypatch: pytest.MonkeyPatch, earliest_hour: int | None, first_row_hour: int
+    monkeypatch: pytest.MonkeyPatch,
+    earliest_hour: int | None,
+    first_row_hour: int,
+    requested: list[int] | None = None,
 ) -> dict[str, int]:
     """backfill_funding over [START, END], the store holding rows from
     `earliest_hour` to hour 900, the provider returning from `first_row_hour`:
-    the history start it saved."""
+    the history start it saved (`requested`: each request's start)."""
     saved: dict[str, int] = {}
 
     async def source() -> Any:
@@ -119,7 +122,9 @@ def _run_funding(
         return (None, None) if earliest_hour is None else (_t(earliest_hour), _t(900))
 
     class Adapter:
-        async def get_funding_history(self, *_: Any) -> list[dict[str, Any]]:
+        async def get_funding_history(self, _: str, start: int, *__: Any) -> list[dict[str, Any]]:
+            if requested is not None:
+                requested.append(start)
             return [{"time": first_row_hour * HOUR, "fundingRate": "0", "premium": "0"}]
 
     class Session:
@@ -156,3 +161,12 @@ def test_a_funding_backfill_remembers_where_the_providers_history_begins(
 def test_a_live_funding_poll_saves_no_history_start(monkeypatch: pytest.MonkeyPatch) -> None:
     # The stored rows begin before the range: a poll for the latest rows.
     assert _run_funding(monkeypatch, -10, 600) == {}
+
+
+def test_a_funding_backfill_covering_the_start_fetches_only_the_missing_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Stored from the start to hour 900 of 1000: from 900 on, not the whole range.
+    requested: list[int] = []
+    assert _run_funding(monkeypatch, 0, 900, requested) == {}
+    assert requested == [900 * HOUR]

@@ -384,16 +384,23 @@ async def backfill_funding(
         )
         return 0
 
-    logger.info("%s: requesting funding history", asset)
+    # Only the tail missing (the latest hours - e.g. market-data restarting
+    # with a deploy): from the latest stored row on, not the whole range again.
+    begins = start if history_start is None else max(start, history_start)
+    fetch_from = start_time_ms
+    if earliest is not None and latest is not None and earliest <= begins + FUNDING_LISTING_SLACK:
+        fetch_from = max(start_time_ms, int(latest.timestamp() * 1000))
+    logger.info("%s: requesting funding history from %s", asset, _fmt(_ms_to_utc(fetch_from)))
     t0 = time.monotonic()
-    history = await adapter.get_funding_history(asset, start_time_ms, end_time_ms)
+    history = await adapter.get_funding_history(asset, fetch_from, end_time_ms)
     logger.info(
         "%s: funding history returned %d rows in %.1fs", asset, len(history), time.monotonic() - t0
     )
     if not history:
         return 0
     first_ms = min(int(f["time"]) for f in history)
-    if (earliest is None or start < earliest) and first_ms > start_time_ms:
+    whole = fetch_from == start_time_ms
+    if whole and (earliest is None or start < earliest) and first_ms > start_time_ms:
         # A request reaching before the stored rows: the provider's funding
         # history begins at its first row - remembered, so a later run doesn't
         # fetch the whole range again to find nothing before it.
