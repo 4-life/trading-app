@@ -458,17 +458,6 @@ function draw(api: IChartApi, chart: PaperChart): (data: PaperChart) => void {
         text: buy ? 'BUY' : 'SELL',
       });
     }
-    for (const p of data.supertrend) {
-      if (!p.signal) continue;
-      const buy = p.signal === 'long';
-      markers.push({
-        time: sec(p.time) as UTCTimestamp,
-        position: buy ? 'belowBar' : 'aboveBar',
-        shape: buy ? 'arrowUp' : 'arrowDown',
-        color: buy ? GREEN : RED,
-        text: buy ? 'Buy' : 'Sell',
-      });
-    }
     for (const p of data.keltner) {
       const buy = p.signal === 'long';
       markers.push({
