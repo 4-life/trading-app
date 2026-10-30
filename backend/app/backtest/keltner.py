@@ -29,6 +29,7 @@ from app.backtest.bars import (
 from app.backtest.models import OPEN_AT_END
 from app.executors.base import direction_allowed
 from app.executors.keltner import reason
+from app.executors.keltner_averaging import KeltnerGuard, keltner_guard
 from app.executors.keltner_signals import KeltnerSignals, keltner_signals
 from app.notifications.error_reporting import run_service
 from app.papers.models import Paper
@@ -96,6 +97,13 @@ def exit_signals(paper: Paper, bars: list[Bar]) -> list[SimTrade]:
         if signal is not None:
             out.append(exit_at("short" if signal == "long" else "long", bar, reason(signal)))
     return out
+
+
+def averaging_guard(paper: Paper, bars: list[Bar]) -> KeltnerGuard:
+    """An averaging paper's own rules over `bars` (as live)."""
+    return keltner_guard(
+        paper.direction, [b.high for b in bars], [b.low for b in bars], [b.close for b in bars]
+    )
 
 
 async def backtest_paper(paper: Paper, start: datetime | None) -> list[SimTrade]:

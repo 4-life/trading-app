@@ -76,6 +76,7 @@ from app.backtest.bars import STOP_SLIPPAGE, Bar, Fill, SimTrade, load_bars
 from app.backtest.models import OPEN_AT_END, BacktestFill, BacktestTrade
 from app.config import settings
 from app.db import async_session
+from app.executors.keltner_averaging import SWING_STOP, KeltnerGuard
 from app.executors.position_management import (
     MAX_DRAWDOWN_EXIT,
     OUT_OF_MARGIN_EXIT,
@@ -120,6 +121,10 @@ EXIT_SIGNALS: dict[str, Callable[[Paper, list[Bar]], list[SimTrade]]] = {
     "vwap": vwap.exit_signals,
     "supertrend": supertrend.exit_signals,
     "keltner": keltner.exit_signals,
+}
+# A strategy's own rules on an averaging position, as live (base.Guard).
+GUARDS: dict[str, Callable[[Paper, list[Bar]], KeltnerGuard]] = {
+    "keltner": keltner.averaging_guard,
 }
 
 
@@ -426,12 +431,15 @@ def simulate(
     start: datetime | None = None,
     signals_held: Sequence[SimTrade] = (),
     exits: Sequence[SimTrade] | None = None,
+    guard: KeltnerGuard | None = None,
 ) -> list[AveragingTrade]:
     """From `start`, one position at a time; `entries`: the strategy's
     trades - their long entries open the positions, their exits are the
     sell signals unless `exits` is given; `signals_held`: its long signals
     on any candle (its own trade held or not) - entries and signal adds too;
-    `exits`: its exits on any candle (EXIT_SIGNALS) - the sell signals."""
+    `exits`: its exits on any candle (EXIT_SIGNALS) - the sell signals;
+    `guard`: its own rules (GUARDS) - which entries open, its swing stop and
+    its broken sells."""
     directions = rules.directions
     signals: dict[str, dict[datetime, SimTrade]] = {d: {} for d in directions}
     sells: dict[str, dict[datetime, SimTrade]] = {d: {} for d in directions}
@@ -464,7 +472,9 @@ def simulate(
         """A new position on the cash."""
         return Position(time, reason, price, sign, cap(budget), slippage=rules.slippage)
 
-    for bar in bars:
+    entry = 0  # the open position's entry candle
+    for i, bar in enumerate(bars):
+        stopped = False  # a swing stop waits for the next signal, not this candle's
         if pos is not None:
             sign = pos.sign
             direction = "short" if sign == -1 else "long"
@@ -482,6 +492,8 @@ def simulate(
                 pos.unwind(bar.time, _better(sign, level, bar.open), fee_rate)
                 level = pos.next_unwind(buffer)
             sell = sells[direction].get(bar.time)
+            if guard is not None and guard.sell_broken(direction, i, entry):
+                sell = None
             margin = pos.margin
             if rules.intraday:
                 # The take-profit at once: the price where the whole position's PnL
@@ -497,6 +509,12 @@ def simulate(
                 if pnl >= rules.take_profit * margin:
                     reason = f"{TAKE_PROFIT_EXIT}:{sell.exit_reason}"
                     closed = _close(pos, bar, sell.close_price, reason, rules, fee_rate)
+            if closed is None and guard is not None:
+                # The swing stop at the close: the whole PnL there (as live).
+                pnl = pos.realized + sign * pos.size * (bar.close - pos.entry)
+                if guard.stopped(direction, i, entry, pos.first_buy, pnl):
+                    closed = _close(pos, bar, bar.close, SWING_STOP, rules, fee_rate)
+                    stopped = True
             if closed is not None:
                 trades.append(closed)
                 pos = None
@@ -508,16 +526,26 @@ def simulate(
                     # The trend still on: a fresh position at the candle's close.
                     pos = open_at(bar.time, REOPEN_IN_TREND, bar.close, sign)
                     pos.buy(bar.time, bar.close, rules.initial_size, rules.leverage, fee_rate)
+                    entry = i
             elif signal is not None and _can_add(pos, rules.initial_size):
                 # A signal add, sized like the first entry.
                 pos.buy(bar.time, signal.entry_price, rules.initial_size, rules.leverage, fee_rate)
         funded = budget is None or budget >= rules.initial_size
         # Flat: the first direction signalling here opens one (both: a long first).
-        signal = next((signals[d][bar.time] for d in directions if bar.time in signals[d]), None)
-        if pos is None and signal is not None and funded and (start is None or bar.time >= start):
+        signal = next(
+            (
+                signals[d][bar.time]
+                for d in directions
+                if bar.time in signals[d] and (guard is None or guard.may_open(d, i))
+            ),
+            None,
+        )
+        opens = pos is None and signal is not None and funded and not stopped
+        if opens and signal is not None and (start is None or bar.time >= start):
             price = signal.entry_price
             pos = open_at(bar.time, signal.entry_reason, price, _sign(signal.direction))
             pos.buy(bar.time, price, rules.initial_size, rules.leverage, fee_rate)
+            entry = i
     if pos is not None and bars:
         trades.append(_close(pos, bars[-1], bars[-1].close, OPEN_AT_END, rules, fee_rate))
     return trades
@@ -567,6 +595,7 @@ async def backtest_paper(paper: Paper, start: datetime | None) -> list[Averaging
     start = start or paper.backtest_start
     signals_of = ENTRY_SIGNALS.get(paper.executor)
     exits_of = EXIT_SIGNALS.get(paper.executor)
+    guard_of = GUARDS.get(paper.executor)
     fee_rate = float(await maker_fee_rate())
     simulated = simulate(
         bars,
@@ -576,6 +605,7 @@ async def backtest_paper(paper: Paper, start: datetime | None) -> list[Averaging
         start,
         signals_of(paper, bars) if signals_of is not None else [],
         exits_of(paper, bars) if exits_of is not None else None,
+        guard_of(paper, bars) if guard_of is not None else None,
     )
     # A position still open on the last candle is stored too (`open_at_end`, at
     # the last close - unrealized); the totals count the closed ones.

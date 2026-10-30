@@ -34,6 +34,7 @@ from itertools import product
 from app.backtest.averaging import (
     ENTRY_SIGNALS,
     EXIT_SIGNALS,
+    GUARDS,
     LIQUIDATION_EXIT,
     STRATEGY_TRADES,
     AveragingTrade,
@@ -43,6 +44,7 @@ from app.backtest.averaging import (
 )
 from app.backtest.bars import Bar, SimTrade, load_bars
 from app.backtest.models import OPEN_AT_END
+from app.executors.keltner_averaging import KeltnerGuard
 from app.executors.position_management import MAX_DRAWDOWN_EXIT, OUT_OF_MARGIN_EXIT
 from app.market_data.limits import market_limits
 from app.papers.models import Paper
@@ -117,6 +119,7 @@ class PaperJob:
     trades: list[SimTrade]
     signals: list[SimTrade]
     exits: list[SimTrade] | None  # EXIT_SIGNALS; None: the trades' exits
+    guard: KeltnerGuard | None  # GUARDS
     rules: Rules  # the paper's, at this leverage
     fee_rate: float
     start: datetime
@@ -147,7 +150,14 @@ def run_paper(job: PaperJob) -> list[dict[str, object]]:
             compound=compound,
         )
         result = simulate(
-            job.bars, job.trades, rules, job.fee_rate, job.start, job.signals, job.exits
+            job.bars,
+            job.trades,
+            rules,
+            job.fee_rate,
+            job.start,
+            job.signals,
+            job.exits,
+            job.guard,
         )
         whole = _part(result, "all")
         drained = drained_at(result, rules)
@@ -323,12 +333,23 @@ def _inputs(
     timeframe: str,
     bars: list[Bar],
     start: datetime | None,
-) -> tuple[list[SimTrade], list[SimTrade], list[SimTrade] | None, list[float]]:
+) -> tuple[Inputs, list[float]]:
     """strategy_inputs and its entries' moves from `start` (entry_moves) -
     in a worker process (plan_sweep)."""
-    trades, signals, exits = strategy_inputs(executor, asset, direction, timeframe, bars, start)
+    inputs = strategy_inputs(executor, asset, direction, timeframe, bars, start)
+    trades, signals = inputs.trades, inputs.signals
     entries = [e for e in (*trades, *signals) if start is None or e.opened_at >= start]
-    return trades, signals, exits, entry_moves(bars, entries)
+    return inputs, entry_moves(bars, entries)
+
+
+@dataclass(frozen=True)
+class Inputs:
+    """A strategy's inputs to an averaging backtest (app/backtest/averaging.py simulate)."""
+
+    trades: list[SimTrade]  # its trades from the start
+    signals: list[SimTrade]  # its entry signals on any candle (ENTRY_SIGNALS)
+    exits: list[SimTrade] | None  # its exit signals on any candle (EXIT_SIGNALS)
+    guard: KeltnerGuard | None  # its own rules (GUARDS)
 
 
 class SweepError(Exception):
@@ -342,16 +363,16 @@ def strategy_inputs(
     timeframe: str,
     bars: list[Bar],
     start: datetime | None = None,
-) -> tuple[list[SimTrade], list[SimTrade], list[SimTrade] | None]:
-    """The strategy's trades from `start`, its long signals and its exits
-    (EXIT_SIGNALS, None without) over `bars` - in a worker process
-    (sweep_paper)."""
+) -> Inputs:
+    """The strategy's inputs over `bars` - in a worker process (sweep_paper)."""
     paper = Paper(executor=executor, asset=asset, direction=direction, timeframe=timeframe)
     exits_of = EXIT_SIGNALS.get(executor)
-    return (
+    guard_of = GUARDS.get(executor)
+    return Inputs(
         STRATEGY_TRADES[executor](paper, bars, start),
         ENTRY_SIGNALS[executor](paper, bars),
         None if exits_of is None else exits_of(paper, bars),
+        None if guard_of is None else guard_of(paper, bars),
     )
 
 
@@ -403,7 +424,7 @@ async def plan_sweep(
     # runs this: its other requests mustn't wait.
     loop = asyncio.get_running_loop()
     with _pool(max_workers=1) as pool:
-        trades, signals, exits, moves = await loop.run_in_executor(
+        inputs, moves = await loop.run_in_executor(
             pool,
             _inputs,
             paper.executor,
@@ -434,9 +455,10 @@ async def plan_sweep(
             paper.timeframe,
             add_size,
             bars,
-            trades,
-            signals,
-            exits,
+            inputs.trades,
+            inputs.signals,
+            inputs.exits,
+            inputs.guard,
             replace(base, leverage=leverage),
             fee_rate,
             start,

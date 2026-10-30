@@ -153,7 +153,7 @@ async def plan_exit_sweep(paper: Paper, max_leverage: float | None = None) -> Ex
     split = start + (end - start) * SPLIT
     loop = asyncio.get_running_loop()
     with _pool(max_workers=1) as pool:
-        trades, _, _ = await loop.run_in_executor(
+        inputs = await loop.run_in_executor(
             pool,
             strategy_inputs,
             paper.executor,
@@ -173,7 +173,7 @@ async def plan_exit_sweep(paper: Paper, max_leverage: float | None = None) -> Ex
     maintenance = limits.maintenance_margin if limits is not None else None
     fee_rate = float(await maker_fee_rate())
     jobs = [
-        ExitJob(bars, trades, leverage, maintenance, fee_rate, start, split)
+        ExitJob(bars, inputs.trades, leverage, maintenance, fee_rate, start, split)
         for leverage in leverages
     ]
     return ExitSweepPlan(start, split, end, jobs)

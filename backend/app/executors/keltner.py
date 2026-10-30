@@ -2,12 +2,20 @@
 (app/executors/keltner_signals.py). A Buy opens a long, a Sell closes it; a
 Sell opens a short, a Buy closes it - each where the paper's direction
 allows (both: either). On the signal candle's close, once per signal. No
-stop-loss, no take-profit - see docs/keltner-strategy-engine.md.
+stop-loss, no take-profit - see docs/keltner-strategy-engine.md. An
+averaging paper adds its own rules (LiveGuard, app/executors/keltner_averaging.py).
 Run: python -m app.executors.keltner"""
 
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
+from sqlalchemy import select
+
+from app.db import async_session
+from app.execution_engine.models import Position
 from app.executors.base import Tick, direction_allowed, last_entry_at, recent_candles, run
+from app.executors.keltner_averaging import SWING_STOP, KeltnerGuard, keltner_guard
 from app.executors.keltner_signals import keltner_signals
 from app.feature_engine.engine import INTERVAL_MINUTES
 from app.notifications.error_reporting import run_service
@@ -42,8 +50,86 @@ def decide_signal(
     return Signal("enter", signal, reason(signal))
 
 
+@dataclass(frozen=True)
+class LiveGuard:
+    """An averaging paper's KeltnerGuard at its last closed candle (base.Guard)."""
+
+    rules: KeltnerGuard
+    last: int
+    entry: int | None  # the open position's entry candle
+    stopped_here: bool  # its last position closed on the swing stop after this candle
+
+    def may_open(self, direction: Direction) -> bool:
+        # A swing stop waits for the next signal, not this candle's.
+        return not self.stopped_here and self.rules.may_open(direction, self.last)
+
+    def swing_exit(
+        self,
+        direction: Direction,
+        first_price: Decimal,
+        entry_price: Decimal,
+        size: Decimal,
+        realized: Decimal,
+    ) -> Signal | None:
+        if self.entry is None:
+            return None
+        sign = 1 if direction == "long" else -1
+        close = self.rules.closes[self.last]
+        pnl = float(realized) + sign * float(size) * (close - float(entry_price))
+        if not self.rules.stopped(direction, self.last, self.entry, float(first_price), pnl):
+            return None
+        return Signal("exit", direction, SWING_STOP)
+
+    def sell_broken(self, direction: Direction) -> bool:
+        return self.entry is not None and self.rules.sell_broken(direction, self.last, self.entry)
+
+
+async def _stopped_after(paper: Paper, since: datetime) -> bool:
+    """The paper's last position (in its mode) closed on the swing stop after `since`."""
+    async with async_session() as session:
+        last = await session.scalar(
+            select(Position)
+            .where(
+                Position.paper_id == paper.id,
+                Position.mode == paper.mode,
+                Position.closed_at.is_not(None),
+            )
+            .order_by(Position.closed_at.desc())
+            .limit(1)
+        )
+    return (
+        last is not None
+        and last.closed_at is not None
+        and last.exit_reason == SWING_STOP
+        and last.closed_at >= since
+    )
+
+
 class KeltnerStrategy:
     name = "keltner"
+
+    async def averaging_guard(self, paper: Paper, opened_at: datetime | None) -> LiveGuard | None:
+        """base.Guarding: over enough candles to reach back to the open
+        position's entry candle."""
+        step = timedelta(minutes=INTERVAL_MINUTES[paper.timeframe])
+        held = 0 if opened_at is None else int((datetime.now(UTC) - opened_at) / step) + 2
+        candles = await recent_candles(paper.asset, paper.timeframe, CANDLE_LOOKBACK + held)
+        if len(candles) < 2:
+            return None
+        rules = keltner_guard(
+            paper.direction,
+            [float(c.high) for c in candles],
+            [float(c.low) for c in candles],
+            [float(c.close) for c in candles],
+        )
+        last = len(candles) - 1
+        entry: int | None = None
+        if opened_at is not None:
+            # The entry candle: the last one closed by the entry.
+            closed = [k for k, c in enumerate(candles) if c.open_time + step <= opened_at]
+            entry = closed[-1] if closed else 0
+        stopped = await _stopped_after(paper, candles[-1].open_time + step)
+        return LiveGuard(rules, last, entry, stopped)
 
     async def before_poll(self, papers: list[Paper], poll_started_at: datetime) -> None:
         return None

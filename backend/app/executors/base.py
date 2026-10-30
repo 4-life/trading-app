@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from sqlalchemy import ColumnElement, func, select
 
@@ -74,6 +74,46 @@ class Strategy(Protocol):
         the ones skipped below - for state that must advance every poll."""
 
     async def decide(self, tick: Tick) -> Signal | None: ...
+
+
+class Guard(Protocol):
+    """An executor's own rules on an averaging paper at its last closed
+    candle (Keltner's: app/executors/keltner_averaging.py)."""
+
+    def may_open(self, direction: Direction) -> bool:
+        """The strategy's entry may open a position."""
+        ...
+
+    def swing_exit(
+        self,
+        direction: Direction,
+        first_price: Decimal,
+        entry_price: Decimal,
+        size: Decimal,
+        realized: Decimal,
+    ) -> Signal | None:
+        """The open position's close at that candle's close - `first_price`
+        its first buy's."""
+        ...
+
+    def sell_broken(self, direction: Direction) -> bool:
+        """The strategy's sell on that candle is ignored."""
+        ...
+
+
+@runtime_checkable
+class Guarding(Protocol):
+    """A strategy with its own rules on an averaging paper."""
+
+    async def averaging_guard(self, paper: Paper, opened_at: datetime | None) -> Guard | None:
+        """At the last closed candle; `opened_at`: the open position's, None flat."""
+        ...
+
+
+async def _guard(strategy: Strategy, paper: Paper, opened_at: datetime | None) -> Guard | None:
+    if paper.kind != "averaging" or not isinstance(strategy, Guarding):
+        return None
+    return await strategy.averaging_guard(paper, opened_at)
 
 
 def direction_allowed(paper_direction: str, direction: Direction) -> bool:
@@ -290,12 +330,13 @@ async def _averaging(
     strategy: Strategy, tick: Tick, position: Position
 ) -> tuple[Signal | None, datetime | None]:
     """An averaging paper's open position (docs/papers.md#averaging-papers) at
-    the latest trade price: its give-up or next add, else selling its lowest
+    the latest trade price: its executor's swing stop (its Guard), else its
+    give-up or next add, else selling its lowest
     unit but the lowest (kept to the close) at the next-higher unit's price
     (unwind_level), else its take-profit - an
     intraday paper's at once, otherwise the strategy's sell once the gain
-    has reached it (the strategy's other exits are off - it holds through
-    the dips), else a signal add - the strategy's
+    has reached it, unless its Guard breaks it (the strategy's other exits
+    are off - it holds through the dips), else a signal add - the strategy's
     entry signal; and when its last buy filled."""
     buys = await _buys(position)
     if not buys:
@@ -303,6 +344,14 @@ async def _averaging(
     paper = tick.paper
     price = await live_trade_price(paper.asset) or tick.price
     direction: Direction = "long" if position.direction == "long" else "short"
+    realized = position.realized_pnl_usd or Decimal(0)
+    guard = await _guard(strategy, paper, position.opened_at)
+    if guard is not None:
+        stop = guard.swing_exit(
+            direction, buys[0][1], position.entry_price, position.size, realized
+        )
+        if stop is not None:
+            return stop, buys[-1][0]
     # The exchange's maintenance margin: an early liquidation moves the levels up.
     limits = await market_limits(paper.asset)
     signal = managed_signal(
@@ -319,7 +368,6 @@ async def _averaging(
         units = await _units(position)
         buffer = unwind_buffer(await taker_fee_rate())
         signal = next_unwind(direction, price, units, position.size, buffer)
-    realized = position.realized_pnl_usd or Decimal(0)
     if signal is None and paper.intraday:
         signal = take_profit_close(
             direction,
@@ -332,6 +380,8 @@ async def _averaging(
         )
     elif signal is None:
         sell = await strategy.decide(tick)
+        if sell is not None and guard is not None and guard.sell_broken(direction):
+            sell = None
         if sell is not None:
             signal = take_profit_sell(
                 sell,
@@ -498,6 +548,10 @@ async def run_once(strategy: Strategy) -> None:
                 signal, last_buy_at = await _averaging(strategy, tick, tick.position)
             else:
                 signal = await _paper_exit(tick) or await strategy.decide(tick)
+                if signal is not None and signal.signal == "enter" and tick.position is None:
+                    guard = await _guard(strategy, paper, None)
+                    if guard is not None and not guard.may_open(signal.direction):
+                        signal = None
                 if signal is None and tick.position is None and reopens(paper):
                     signal = await _reopen_in_trend(paper)
                 if signal is not None and signal.signal == "enter":
