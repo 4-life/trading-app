@@ -27,7 +27,6 @@ from app.executors.position_management import (
     SIGNAL_ADD,
     STRENGTH_ADD,
     TAKE_PROFIT_EXIT,
-    dead_close,
     held_grid,
     managed_signal,
     next_unwind,
@@ -84,28 +83,6 @@ class Guard(Protocol):
 
     def may_open(self, direction: Direction) -> bool:
         """The strategy's entry may open a position."""
-        ...
-
-    def dies(
-        self,
-        direction: Direction,
-        first_price: Decimal,
-        entry_price: Decimal,
-        size: Decimal,
-        realized: Decimal,
-    ) -> bool:
-        """The open position is dead at that candle's close - `first_price`
-        its first buy's."""
-        ...
-
-    @property
-    def dead_exit(self) -> str:
-        """A dead position's exit reason."""
-        ...
-
-    @property
-    def dead_floor(self) -> Decimal:
-        """The whole PnL a dead position closes at, a share of its margin."""
         ...
 
     def sell_broken(self, direction: Direction) -> bool:
@@ -316,17 +293,6 @@ async def _already_queued(paper: Paper, signal: Signal, switched_off: bool) -> b
     return found is not None
 
 
-async def _mark_dead(position: Position) -> None:
-    """The position is dead from now on (Guard.dies): it closes at Guard.dead_floor."""
-    now = datetime.now(UTC)
-    async with async_session() as session, session.begin():
-        row = await session.get(Position, position.id)
-        if row is not None and row.dead_at is None:
-            row.dead_at = now
-    position.dead_at = now
-    logger.info("paper %d: position %d is dead", position.paper_id, position.id)
-
-
 async def _buys(position: Position) -> list[tuple[datetime, Decimal, Decimal]]:
     """The position's filled opening orders (its first entry and every add),
     oldest first, as (time, fill price, size)."""
@@ -379,15 +345,13 @@ async def _averaging(
     strategy: Strategy, tick: Tick, position: Position
 ) -> tuple[Signal | None, datetime | None]:
     """An averaging paper's open position (docs/papers.md#averaging-papers) at
-    the latest trade price: a dead one's close (its executor's
-    Guard), else its give-up or next add (none once dead), else selling its
+    the latest trade price: its give-up or next add, else selling its
     lowest unit but the lowest (kept to the close; with a Guard: but its
     core) at the next-higher unit's price (unwind_level), else its take-profit - an
     intraday paper's at once, otherwise the strategy's sell once the gain
     has reached it, unless its Guard breaks it (the strategy's other exits
     are off - it holds through the dips), else a signal add - the strategy's
-    entry signal - or its Guard's strength add (none once dead); and when its
-    last buy filled."""
+    entry signal - or its Guard's strength add; and when its last buy filled."""
     buys = await _buys(position)
     if not buys:
         return None, None
@@ -396,24 +360,6 @@ async def _averaging(
     direction: Direction = "long" if position.direction == "long" else "short"
     realized = position.realized_pnl_usd or Decimal(0)
     guard = await _guard(strategy, paper, position.opened_at)
-    if guard is not None:
-        if position.dead_at is None and guard.dies(
-            direction, buys[0][1], position.entry_price, position.size, realized
-        ):
-            await _mark_dead(position)
-        if position.dead_at is not None:
-            close = dead_close(
-                direction,
-                price,
-                position.entry_price,
-                position.size,
-                position.margin_usd,
-                realized,
-                guard.dead_floor,
-                guard.dead_exit,
-            )
-            if close is not None:
-                return close, buys[-1][0]
     # The exchange's maintenance margin: an early liquidation moves the levels up.
     limits = await market_limits(paper.asset)
     signal = managed_signal(
@@ -426,10 +372,6 @@ async def _averaging(
         paper.max_drawdown_pct,
         None if limits is None else limits.maintenance_margin,
     )
-    # A dead position adds nothing (its Guard).
-    dead = guard is not None and position.dead_at is not None
-    if signal is not None and signal.signal == "add" and dead:
-        signal = None
     grid = await _grid(position, guard is not None)
     if signal is None:
         buffer = unwind_buffer(await taker_fee_rate())
@@ -458,7 +400,7 @@ async def _averaging(
                 realized,
                 paper.take_profit_pct,
             )
-    if signal is None and not dead:
+    if signal is None:
         # The strategy's entry rule, as if flat - its signal adds a unit.
         entry = await strategy.decide(replace(tick, position=None))
         signal = signal_add(entry, direction)

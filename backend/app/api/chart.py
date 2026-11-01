@@ -32,9 +32,8 @@ from app.executors.vwap_signals import lines, signal_at
 from app.feature_engine.engine import INTERVAL_MINUTES
 from app.market_data.limits import market_limits
 from app.market_data.models import Candle
-from app.market_data.shock_state import SHOCK_INTERVAL, SHOCK_STEP, load_series
-from app.market_data.shocks import lookback, market_shocks
-from app.papers.models import REGIME_ASSET, Paper
+from app.market_data.shock_state import detect
+from app.papers.models import Paper
 
 router = APIRouter()
 
@@ -411,47 +410,19 @@ _overlay_cache: OrderedDict[tuple[object, ...], _Overlays] = OrderedDict()
 _shock_cache: OrderedDict[tuple[object, ...], list[ShockOut]] = OrderedDict()
 
 
-# How far back the 1m detection reaches (every coin's 1m candles are a lot of rows).
-SHOCK_FINE_SPAN = timedelta(days=14)
-# 1m candles over this much before an event: the 1m detection saw it (else
-# the chart's timeframe's does).
-SHOCK_COVERAGE = timedelta(hours=4)
-
-
 async def _shocks(
     session: AsyncSession, paper: Paper, first: datetime, last: datetime
 ) -> list[ShockOut]:
     """The market-shock events on the paper's closed candles `first` ->
-    `last`, each on the chart candle it was detected in: from every coin's
-    1m candles (SHOCK_INTERVAL; lookback() more before) over the last
-    SHOCK_FINE_SPAN; where BTC's 1m candles don't cover the hours before an
-    event (before that span, before they were collected, a gap while
-    market-data was down), from the chart's own timeframe. Computed once
-    per range."""
+    `last` (shock_state.detect), each on the chart candle it was detected
+    in. Computed once per range."""
     key = (paper.asset, paper.timeframe, first, last)
     cached = _shock_cache.get(key)
     if cached is not None:
         _shock_cache.move_to_end(key)
         return cached
     step = _step(paper.timeframe)
-    end = last + step
-    fine = SHOCK_STEP
-    fine_start = max(first, end - SHOCK_FINE_SPAN)
-    minutes = await load_series(session, SHOCK_INTERVAL, fine_start - lookback(fine) * fine, end)
-    found = await asyncio.to_thread(market_shocks, minutes, paper.asset, fine, fine_start)
-    btc = minutes.get(REGIME_ASSET, {})
-
-    def covered(at: datetime) -> bool:
-        """BTC's 1m candles cover the SHOCK_COVERAGE before `at`'s candle closed."""
-        if at < fine_start:
-            return False
-        span = SHOCK_COVERAGE // fine
-        known = sum(1 for k in range(span) if at + step - (k + 1) * fine in btc)
-        return known >= span * 0.9
-
-    coarse = await load_series(session, paper.timeframe, first - lookback(step) * step, end)
-    older = await asyncio.to_thread(market_shocks, coarse, paper.asset, step, first)
-    found = sorted([*found, *(s for s in older if not covered(s.time))], key=lambda s: s.time)
+    found = await detect(session, paper.asset, paper.timeframe, first, last + step)
 
     def candle(at: datetime) -> datetime:
         return first + ((at - first) // step) * step
@@ -465,7 +436,6 @@ async def _shocks(
             text=s.text,
         )
         for s in found
-        if s.time >= first
     ]
     _shock_cache[key] = shocks
     while len(_shock_cache) > OVERLAY_CACHE_SIZE:

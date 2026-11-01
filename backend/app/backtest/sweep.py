@@ -42,11 +42,12 @@ from app.backtest.averaging import (
     rules_of,
     simulate,
 )
-from app.backtest.bars import Bar, SimTrade, load_bars
+from app.backtest.bars import Bar, SimTrade, backtest_shocks, load_bars
 from app.backtest.models import OPEN_AT_END
 from app.executors.keltner_averaging import KeltnerGuard
 from app.executors.position_management import MAX_DRAWDOWN_EXIT, OUT_OF_MARGIN_EXIT
 from app.market_data.limits import market_limits
+from app.market_data.shocks import Shock
 from app.papers.models import Paper
 from app.system.exchange_api import maker_fee_rate
 
@@ -120,6 +121,7 @@ class PaperJob:
     signals: list[SimTrade]
     exits: list[SimTrade] | None  # EXIT_SIGNALS; None: the trades' exits
     guard: KeltnerGuard | None  # GUARDS
+    shocks: list[Shock]  # the market shocks (the risk engine's entry block)
     rules: Rules  # the paper's, at this leverage
     fee_rate: float
     start: datetime
@@ -158,6 +160,7 @@ def run_paper(job: PaperJob) -> list[dict[str, object]]:
             job.signals,
             job.exits,
             job.guard,
+            job.shocks,
         )
         whole = _part(result, "all")
         drained = drained_at(result, rules)
@@ -435,6 +438,7 @@ async def plan_sweep(
             paper.backtest_start,
         )
     fee_rate = float(await maker_fee_rate())
+    shocks = await backtest_shocks(paper, bars, paper.backtest_start)
     limits = await market_limits(paper.asset)
     base = rules_of(paper, limits)
     if max_margin is not None:
@@ -459,6 +463,7 @@ async def plan_sweep(
             inputs.signals,
             inputs.exits,
             inputs.guard,
+            shocks,
             replace(base, leverage=leverage),
             fee_rate,
             start,

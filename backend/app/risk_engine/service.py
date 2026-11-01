@@ -3,7 +3,7 @@
 1. decides every `pending` request in the order queue (exits are always
    approved; entries are sized by the budget allocator - or the paper's
    fixed initial size - and checked against the limits, and held back for
-   SHOCK_BLOCK after a market shock against them; an add, averaging down,
+   SHOCK_BLOCK after a market shock against them (shock_state); an add, averaging down,
    is sized by the paper and needs free cash);
 2. records each mode's equity (once a minute) for drawdown / daily loss;
 3. disables papers whose realized loss reached PAPER_LOSS_DISABLE_PCT of
@@ -13,7 +13,7 @@
 
 import logging
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from datetime import time as dtime
 from decimal import Decimal
 
@@ -39,7 +39,7 @@ from app.execution_engine.models import (
 from app.executors.position_management import AVERAGE_DOWN, add_terms
 from app.market_data.collector import PRICE_INTERVAL
 from app.market_data.models import Candle
-from app.market_data.shock_state import blocking, recent_shocks
+from app.market_data.shock_state import SHOCK_BLOCK, entry_blocked, recent_shocks
 from app.notifications.alerts import alert
 from app.papers.models import Paper
 from app.risk_engine.blocks import block_paper, is_entry_blocked, unblock_paper
@@ -53,9 +53,6 @@ from app.watchdog.redis_client import heartbeat_age_seconds, is_kill_switch_acti
 logger = logging.getLogger(__name__)
 
 EQUITY_SNAPSHOT_SECONDS = 60
-# A market shock (docs/market-shocks.md) holds back the entries against it this
-# long: a panic the longs, a bullrun the shorts - the market's, or the coin's own.
-SHOCK_BLOCK = timedelta(hours=6)
 
 
 class Rejected(Exception):
@@ -161,7 +158,8 @@ async def _size_entry(decision: TradingDecision, paper: Paper) -> tuple[Decimal,
         raise Rejected("paper is disabled")
     if await is_kill_switch_active():
         raise Rejected("watchdog kill switch active")
-    shock = blocking(await recent_shocks(paper.asset, SHOCK_BLOCK), decision.direction)
+    recent = await recent_shocks(paper.asset, SHOCK_BLOCK)
+    shock = entry_blocked(recent, decision.direction, datetime.now(UTC))
     if shock is not None:
         until = (shock.detected_at + SHOCK_BLOCK).strftime("%Y-%m-%d %H:%M UTC")
         scope = "market" if shock.scope == "market" else paper.asset

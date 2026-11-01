@@ -66,17 +66,26 @@ import sys
 from bisect import bisect_left
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import delete, select
 
 from app.backtest import keltner, regime, supertrend, vwap
-from app.backtest.bars import STOP_SLIPPAGE, Bar, Fill, SimTrade, load_bars
+from app.backtest.bars import (
+    STOP_SLIPPAGE,
+    Bar,
+    Fill,
+    HeldBack,
+    SimTrade,
+    backtest_shocks,
+    load_bars,
+    log_held_back,
+)
 from app.backtest.models import OPEN_AT_END, BacktestFill, BacktestTrade
 from app.config import settings
 from app.db import async_session
-from app.executors.keltner_averaging import DEAD_CLOSE_PNL, DEAD_EXIT, KeltnerGuard
+from app.executors.keltner_averaging import KeltnerGuard
 from app.executors.position_management import (
     MAX_DRAWDOWN_EXIT,
     OUT_OF_MARGIN_EXIT,
@@ -88,6 +97,8 @@ from app.executors.position_management import (
     unwound_unit,
 )
 from app.market_data.limits import Limits, market_limits
+from app.market_data.shock_state import entry_blocked
+from app.market_data.shocks import Shock
 from app.notifications.error_reporting import run_service
 from app.papers.models import Paper
 from app.system.exchange_api import maker_fee_rate
@@ -379,16 +390,13 @@ def _can_add(pos: Position, margin: float) -> bool:
     return pos.budget is None or pos.margin + margin <= pos.budget
 
 
-def _down_to_low(
-    pos: Position, bar: Bar, rules: Rules, fee_rate: float, adds: bool = True
-) -> AveragingTrade | None:
+def _down_to_low(pos: Position, bar: Bar, rules: Rules, fee_rate: float) -> AveragingTrade | None:
     """The candle's way down to its low: the adds, the give-ups and the
     liquidation it reaches, highest price first (an exit before an add at
     the same price); each fills at its level, or at the open past it. Past
     the budget no add comes - the dip runs on to a give-up: the automatic
     one (OUT_OF_MARGIN_EXIT) comes before the execution engine's liquidation,
-    which only a gap past both reaches - at the open, the give-up's fill. No
-    add without `adds` (a dead position). The
+    which only a gap past both reaches - at the open, the give-up's fill. The
     exchange's (`maintenance_notional`) can come first at a high leverage.
     A short's: the way up to its high, lowest price first."""
     sign = pos.sign
@@ -403,7 +411,7 @@ def _down_to_low(
         ]
         if rules.max_drawdown is not None:
             events.append((_give_up_price(pos, rules.max_drawdown), 3, MAX_DRAWDOWN_EXIT))
-        if adds and _can_add(pos, rules.add_size):
+        if _can_add(pos, rules.add_size):
             events.append((pos.margin_left_at(add_at), 0, ""))
         reached = [e for e in events if sign * (e[0] - adverse) >= 0]
         if not reached:
@@ -440,14 +448,27 @@ def simulate(
     signals_held: Sequence[SimTrade] = (),
     exits: Sequence[SimTrade] | None = None,
     guard: KeltnerGuard | None = None,
+    shocks: Sequence[Shock] = (),
+    held_back: list[HeldBack] | None = None,
 ) -> list[AveragingTrade]:
     """From `start`, one position at a time; `entries`: the strategy's
     trades - their long entries open the positions, their exits are the
     sell signals unless `exits` is given; `signals_held`: its long signals
     on any candle (its own trade held or not) - entries and signal adds too;
     `exits`: its exits on any candle (EXIT_SIGNALS) - the sell signals;
-    `guard`: its own rules (GUARDS) - which entries open, its dead positions and
-    its broken sells."""
+    `guard`: its own rules (GUARDS) - which entries open and
+    its broken sells; `shocks`: the market shocks - no entry against one
+    for SHOCK_BLOCK (the risk engine's rule), each one held back added to
+    `held_back`."""
+    step = bars[1].time - bars[0].time if len(bars) > 1 else timedelta(0)
+
+    def blocked(direction: str, bar: Bar) -> bool:
+        """A shock holds back an entry at `bar`'s close (noted in `held_back`)."""
+        shock = entry_blocked(shocks, direction, bar.time + step)
+        if shock is not None and held_back is not None:
+            held_back.append(HeldBack(bar.time + step, direction, shock))
+        return shock is not None
+
     directions = rules.directions
     signals: dict[str, dict[datetime, SimTrade]] = {d: {} for d in directions}
     sells: dict[str, dict[datetime, SimTrade]] = {d: {} for d in directions}
@@ -481,16 +502,14 @@ def simulate(
         return Position(time, reason, price, sign, cap(budget), slippage=rules.slippage)
 
     entry = 0  # the open position's entry candle
-    dead = False  # the open position is dead (guard.dies): it closes at DEAD_CLOSE_PNL
     for i, bar in enumerate(bars):
-        waits = False  # a dead position's close waits for the next signal, not this candle's
         if pos is not None:
             sign = pos.sign
             direction = "short" if sign == -1 else "long"
             signal = signals[direction].get(bar.time)  # its own direction's only
             favourable = bar.high if sign == 1 else bar.low  # a short's way down
             buys = len(pos.fills)
-            closed = _down_to_low(pos, bar, rules, fee_rate, adds=not dead)
+            closed = _down_to_low(pos, bar, rules, fee_rate)
             # On the way up, each unit but the lowest is sold once it's in profit
             # - not in a candle that added units: its high may have come first.
             added = len(pos.fills) > buys
@@ -504,15 +523,6 @@ def simulate(
             if guard is not None and guard.sell_broken(direction, i, entry):
                 sell = None
             margin = pos.margin
-            if dead and closed is None and not added:
-                # Back up at DEAD_CLOSE_PNL of the margin (as live): the price where
-                # the whole position's PnL is.
-                floor = DEAD_CLOSE_PNL * pos.margin
-                target = pos.entry + sign * (floor - pos.realized) / pos.size
-                if sign * (favourable - target) >= 0:
-                    fill = _better(sign, target, bar.open)
-                    closed = _close(pos, bar, fill, DEAD_EXIT, rules, fee_rate)
-                    waits = True
             if rules.intraday:
                 # The take-profit at once: the price where the whole position's PnL
                 # reaches it - not in a candle that added units, as the unwinds.
@@ -527,10 +537,6 @@ def simulate(
                 if pnl >= rules.take_profit * margin:
                     reason = f"{TAKE_PROFIT_EXIT}:{sell.exit_reason}"
                     closed = _close(pos, bar, sell.close_price, reason, rules, fee_rate)
-            if closed is None and guard is not None and not dead:
-                # Dead at the close: the whole PnL there (as live).
-                pnl = pos.realized + sign * pos.size * (bar.close - pos.entry)
-                dead = guard.dies(direction, i, entry, pos.first_buy, pnl)
             if closed is not None:
                 trades.append(closed)
                 pos = None
@@ -538,15 +544,15 @@ def simulate(
                     budget += closed.pnl_usd
                 funded = budget is None or budget >= rules.initial_size
                 reopen = closed.exit_reason == TAKE_PROFIT_EXIT and bar.time in trend[direction]
-                if reopen and funded:
+                if reopen and funded and not blocked(direction, bar):
                     # The trend still on: a fresh position at the candle's close.
                     pos = open_at(bar.time, REOPEN_IN_TREND, bar.close, sign)
                     cored = guard is not None
                     pos.buy(
                         bar.time, bar.close, rules.initial_size, rules.leverage, fee_rate, cored
                     )
-                    entry, dead = i, False
-            elif not dead and _can_add(pos, rules.initial_size):
+                    entry = i
+            elif _can_add(pos, rules.initial_size):
                 last_buy = next(f.price for f in reversed(pos.fills) if f.side == "buy")
                 allowed = guard is None or (
                     signal is not None
@@ -564,21 +570,24 @@ def simulate(
                     pos.buy(bar.time, bar.close, size, rules.leverage, fee_rate, core=True)
         funded = budget is None or budget >= rules.initial_size
         # Flat: the first direction signalling here opens one (both: a long first).
+        flat = pos is None and funded and (start is None or bar.time >= start)
         signal = next(
             (
                 signals[d][bar.time]
                 for d in directions
-                if bar.time in signals[d] and (guard is None or guard.may_open(d, i))
+                if flat
+                and bar.time in signals[d]
+                and (guard is None or guard.may_open(d, i))
+                and not blocked(d, bar)
             ),
             None,
         )
-        opens = pos is None and signal is not None and funded and not waits
-        if opens and signal is not None and (start is None or bar.time >= start):
+        if flat and signal is not None:
             price = signal.entry_price
             pos = open_at(bar.time, signal.entry_reason, price, _sign(signal.direction))
             cored = guard is not None
             pos.buy(bar.time, price, rules.initial_size, rules.leverage, fee_rate, cored)
-            entry, dead = i, False
+            entry = i
     if pos is not None and bars:
         trades.append(_close(pos, bars[-1], bars[-1].close, OPEN_AT_END, rules, fee_rate))
     return trades
@@ -630,6 +639,7 @@ async def backtest_paper(paper: Paper, start: datetime | None) -> list[Averaging
     exits_of = EXIT_SIGNALS.get(paper.executor)
     guard_of = GUARDS.get(paper.executor)
     fee_rate = float(await maker_fee_rate())
+    held: list[HeldBack] = []
     simulated = simulate(
         bars,
         trades_of(paper, bars, start),
@@ -639,7 +649,10 @@ async def backtest_paper(paper: Paper, start: datetime | None) -> list[Averaging
         signals_of(paper, bars) if signals_of is not None else [],
         exits_of(paper, bars) if exits_of is not None else None,
         guard_of(paper, bars) if guard_of is not None else None,
+        await backtest_shocks(paper, bars, start),
+        held,
     )
+    log_held_back(paper, held)
     # A position still open on the last candle is stored too (`open_at_end`, at
     # the last close - unrealized); the totals count the closed ones.
     trades = simulated

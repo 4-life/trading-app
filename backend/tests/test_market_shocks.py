@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
-from app.market_data.shock_state import blocking
+from app.market_data.shock_state import entry_blocked
 from app.market_data.shocks import Series, Shock, market_shocks
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
@@ -83,9 +83,12 @@ def test_without_enough_coins_breadth_is_skipped() -> None:
     assert (shock.kind, "no breadth" in shock.text) == ("panic", True)
 
 
-def test_a_panic_blocks_longs_and_a_bullrun_shorts() -> None:
+def test_a_panic_blocks_longs_and_a_bullrun_shorts_for_six_hours() -> None:
     panic = Shock(T0, T0 + STEP, "panic", "market", "")
     bullrun = Shock(T0 + STEP, T0 + 2 * STEP, "bullrun", "coin", "")
-    assert blocking([panic, bullrun], "long") == panic
-    assert blocking([panic, bullrun], "short") == bullrun
-    assert blocking([panic], "short") is None
+    at = T0 + 3 * STEP
+    assert entry_blocked([panic, bullrun], "long", at) == panic
+    assert entry_blocked([panic, bullrun], "short", at) == bullrun
+    assert entry_blocked([panic], "short", at) is None
+    assert entry_blocked([panic], "long", T0) is None  # before it was detected
+    assert entry_blocked([panic], "long", T0 + STEP + timedelta(hours=6)) is None

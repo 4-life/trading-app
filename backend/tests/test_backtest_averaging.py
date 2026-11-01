@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.backtest.averaging import Rules, in_trend, simulate, states_after
-from app.backtest.bars import Bar, Fill, SimTrade, exit_at
+from app.backtest.bars import Bar, Fill, HeldBack, SimTrade, exit_at
 from app.backtest.sweep import (
     adverse_move,
     drained_at,
@@ -20,6 +20,7 @@ from app.executors.position_management import (
     REOPEN_IN_TREND,
     TAKE_PROFIT_EXIT,
 )
+from app.market_data.shocks import Shock
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
 # Plan F: $10 at 10x, then $10 at 3x whenever half the margin is lost; TP +30%, give-up -40%.
@@ -480,3 +481,15 @@ def test_ruin_is_certain_without_an_edge_and_rare_with_a_big_one() -> None:
     assert ruin_probability(0.01, 50, 300, 750) < 0.001
     # More room: less likely.
     assert ruin_probability(0.1, 50, 300, 1500) < ruin_probability(0.1, 50, 300, 750)
+
+
+def test_a_market_panic_holds_back_the_entries_for_six_hours() -> None:
+    # Hourly candles; a panic detected at hour 1: the entry at hour 2 is held
+    # back, the one at hour 8 (its close 9h, past 1h + 6h) opens.
+    bars = _bars(*[(100.0, 100.0, 100.0, 100.0)] * 10)
+    panic = Shock(T0, T0 + timedelta(hours=1), "panic", "market", "")
+    entries = [_entry(2), _entry(8)]
+    held: list[HeldBack] = []
+    [t] = simulate(bars, entries, PLAN_F, shocks=[panic], held_back=held)
+    assert t.opened_at == T0 + timedelta(hours=8)
+    assert held == [HeldBack(T0 + timedelta(hours=3), "long", panic)]

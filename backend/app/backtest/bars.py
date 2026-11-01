@@ -3,16 +3,21 @@ simulated trade and an averaging position's fill, and saving a backtest's
 trades to `backtest_trades`."""
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import NamedTuple
 
 from sqlalchemy import delete, select
 
 from app.backtest.models import OPEN_AT_END, BacktestTrade
 from app.db import async_session
 from app.executors.paper_exits import PAPER_STOP_LOSS, PAPER_TAKE_PROFIT
+from app.feature_engine.engine import INTERVAL_MINUTES
 from app.market_data.models import Candle
+from app.market_data.shock_state import detect, entry_blocked
+from app.market_data.shocks import Shock
 from app.papers.models import Paper
 from app.system.exchange_api import maker_fee_rate
 
@@ -152,13 +157,70 @@ async def load_bars(paper: Paper) -> list[Bar]:
     ]
 
 
+async def backtest_shocks(paper: Paper, bars: list[Bar], start: datetime | None) -> list[Shock]:
+    """The market shocks over a backtest's candles (from `start`) - the risk
+    engine's entry block, as live (docs/market-shocks.md)."""
+    if not bars:
+        return []
+    step = timedelta(minutes=INTERVAL_MINUTES[paper.timeframe])
+    first = max(bars[0].time, start) if start is not None else bars[0].time
+    async with async_session() as session:
+        return await detect(session, paper.asset, paper.timeframe, first, bars[-1].time + step)
+
+
+class HeldBack(NamedTuple):
+    """An entry a market shock held back (the risk engine's rule)."""
+
+    at: datetime  # its signal candle's close
+    direction: str
+    shock: Shock
+
+
+def log_held_back(paper: Paper, held: list[HeldBack]) -> None:
+    """The backtest log's line for each entry a shock held back."""
+    for h in held:
+        scope = "market" if h.shock.scope == "market" else paper.asset
+        logger.info(
+            "paper %d: %s entry at %s held back - %s %s (%s, detected %s)",
+            paper.id,
+            h.direction,
+            h.at.strftime("%Y-%m-%d %H:%M"),
+            scope,
+            h.shock.kind,
+            h.shock.text,
+            h.shock.detected_at.strftime("%Y-%m-%d %H:%M"),
+        )
+
+
+def unblocked(
+    trades: list[SimTrade], shocks: Sequence[Shock], step: timedelta
+) -> tuple[list[SimTrade], list[HeldBack]]:
+    """The trades the risk engine would have let open - none entered (at its
+    signal candle's close) while a shock against it held entries back - and
+    the ones it held back."""
+    kept: list[SimTrade] = []
+    held: list[HeldBack] = []
+    for t in trades:
+        at = t.opened_at + step
+        shock = entry_blocked(shocks, t.direction, at)
+        if shock is None:
+            kept.append(t)
+        else:
+            held.append(HeldBack(at, t.direction, shock))
+    return kept, held
+
+
 async def save_trades(
     paper: Paper, simulated: list[SimTrade], bars: list[Bar], start: datetime | None
 ) -> list[SimTrade]:
     """Replaces the paper's backtest rows with `simulated` (net of the
     provider's maker fees) and logs the totals. A trade still open on the
     last candle has no result yet - left out of the stored trades and every
-    statistic."""
+    statistic. The entries a market shock held back (the risk engine's rule)
+    are left out."""
+    step = timedelta(minutes=INTERVAL_MINUTES[paper.timeframe])
+    simulated, held = unblocked(simulated, await backtest_shocks(paper, bars, start), step)
+    log_held_back(paper, held)
     trades = [t for t in simulated if t.exit_reason != OPEN_AT_END]
     fees = float(await maker_fee_rate()) * 2  # entry and exit
     now = datetime.now(UTC)
