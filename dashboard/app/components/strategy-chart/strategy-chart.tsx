@@ -137,6 +137,12 @@ function infoAt(chart: PaperChart, t: number): InfoRow[] {
       color: up ? GREEN : RED,
     });
   }
+  for (const s of chart.shocks.filter((x) => sec(x.time) === t)) {
+    const label = `${s.scope === 'market' ? 'market' : chart.asset} ${s.kind}`;
+    const color = s.kind === 'panic' ? RED : GREEN;
+    rows.push({ text: `${label} · detected ${formatDateTime(s.detected_at)}`, color });
+    rows.push({ text: s.text, color });
+  }
   const band = chart.bands.find((p) => sec(p.time) === t);
   if (band && band.band !== null) {
     const bull = band.state === 1;
@@ -411,6 +417,11 @@ function draw(api: IChartApi, chart: PaperChart): (data: PaperChart) => void {
         attach(new VerticalLine(onCandle(t.closed_at) as UTCTimestamp, RED));
       }
     }
+    // Market shocks: a dashed line across the chart, red panic, green bullrun
+    // (their dots with the markers below).
+    for (const s of data.shocks) {
+      attach(new VerticalLine(sec(s.time) as UTCTimestamp, s.kind === 'panic' ? RED : GREEN));
+    }
 
     // Markers on the candles: swings, BUY / SELL, fills, backtest fills.
     const markers: SeriesMarker<Time>[] = [];
@@ -444,6 +455,15 @@ function draw(api: IChartApi, chart: PaperChart): (data: PaperChart) => void {
         shape: buy ? 'arrowUp' : 'arrowDown',
         color: buy ? GREEN : RED,
         text: buy ? 'Buy' : 'Sell',
+      });
+    }
+    for (const s of data.shocks) {
+      const panic = s.kind === 'panic';
+      markers.push({
+        time: sec(s.time) as UTCTimestamp,
+        position: panic ? 'aboveBar' : 'belowBar',
+        shape: 'circle',
+        color: panic ? RED : GREEN,
       });
     }
     for (const p of data.bands) {
@@ -613,6 +633,7 @@ function withOlder(chart: PaperChart, older: Older): PaperChart {
     bands: [...older.bands.filter(before), ...chart.bands],
     supertrend: [...older.supertrend.filter(before), ...chart.supertrend],
     keltner: [...older.keltner.filter(before), ...chart.keltner],
+    shocks: [...older.shocks.filter(before), ...chart.shocks],
     swings: [...swings, ...chart.swings],
   };
 }
@@ -627,6 +648,7 @@ function withoutHidden(chart: PaperChart, hidden: Set<Indicator>): PaperChart {
     bands: hidden.has('bands') ? [] : chart.bands,
     supertrend: hidden.has('supertrend') ? [] : chart.supertrend,
     keltner: hidden.has('keltner') ? [] : chart.keltner,
+    shocks: hidden.has('shocks') ? [] : chart.shocks,
   };
 }
 
@@ -662,6 +684,7 @@ export default function StrategyChart({ chart }: { chart: PaperChart }) {
         bands: [],
         supertrend: [],
         keltner: [],
+        shocks: [],
         swings: [],
         done: false,
       };
@@ -705,6 +728,7 @@ export default function StrategyChart({ chart }: { chart: PaperChart }) {
           kept.bands = [...chunk.bands, ...kept.bands];
           kept.supertrend = [...chunk.supertrend, ...kept.supertrend];
           kept.keltner = [...chunk.keltner, ...kept.keltner];
+          kept.shocks = [...chunk.shocks, ...kept.shocks];
           kept.swings = [...chunk.swings, ...kept.swings];
           kept.done = chunk.candles.length < limit;
           data = withoutHidden(withOlder(chart, kept), hidden);

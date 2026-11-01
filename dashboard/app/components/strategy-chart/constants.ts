@@ -13,5 +13,6 @@ export const INDICATORS = [
   ["bands", "Trend bands"],
   ["supertrend", "Supertrend"],
   ["keltner", "Keltner signals"],
+  ["shocks", "Market shocks"],
 ] as const;
 export const HIDDEN_INDICATORS_KEY = "chart-hidden-indicators";

@@ -86,7 +86,7 @@ See [papers](docs/papers.md).
 
 Deployed as a Docker Compose stack of independent services, mirroring the layers below. Each service has its own doc:
 
-- [market-data](docs/market-data.md) — market data.
+- [market-data](docs/market-data.md) — market data; its [market-shock detector](docs/market-shocks.md) marks sudden market and coin moves on the charts.
 - [feature-engine](docs/feature-engine.md) — normalized features across price, volume, derivatives, order book, and tokenized-equity domains.
 - [strategy-executor](docs/strategy-executor.md) — can be many containers; each is a dedicated, hardcoded strategy ([VWAP + EMA9](docs/vwap-strategy-engine.md), [Trend](docs/trend-strategy-engine.md), [Regime](docs/regime-strategy-engine.md), [Supertrend](docs/supertrend-strategy-engine.md) or [Keltner](docs/keltner-strategy-engine.md)) run independently across every configured asset; the [swing indicators](docs/swings.md) they and the chart share.
 - scanner — finds coins across the market for [scanner papers](docs/papers.md#scanner-papers) and creates papers for them.

@@ -113,6 +113,15 @@ export interface KeltnerPoint {
   signal: "long" | "short"; // Buy | Sell at this candle's close
 }
 
+// A market-shock event (docs/market-shocks.md): red panic, green bullrun.
+export interface ShockPoint {
+  time: string; // the chart candle it was detected in (open time)
+  detected_at: string; // when: the close of the 1m candle (or the chart's) that showed it
+  kind: "panic" | "bullrun";
+  scope: "market" | "coin"; // the whole market, or the chart's coin
+  text: string;
+}
+
 export interface PaperChart {
   paper_id: number;
   asset: string;
@@ -125,6 +134,7 @@ export interface PaperChart {
   bands: BandPoint[];
   supertrend: SupertrendPoint[]; // every paper's
   keltner: KeltnerPoint[]; // a Keltner paper's only
+  shocks: ShockPoint[]; // every chart's
   positions: ChartPosition[];
   backtest: BacktestTrade[];
 }
@@ -138,4 +148,5 @@ export interface CandleChunk {
   supertrend: SupertrendPoint[];
   keltner: KeltnerPoint[];
   swings: ChartSwing[]; // pivoting in the chunk
+  shocks: ShockPoint[];
 }

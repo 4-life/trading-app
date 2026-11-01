@@ -7,12 +7,17 @@ from datetime import UTC, datetime, timedelta
 from app.config import settings
 from app.exchange.base import MarketAdapter
 from app.exchange.source import connected_adapter
+from app.market_data.assets import configured_assets
 from app.market_data.collector import FUNDING_COVERAGE_TOLERANCE, backfill_candles, backfill_funding
 from app.notifications.error_reporting import run_service
 from app.papers.models import REGIME_ASSET
 from app.papers.queries import executor_timeframes, paper_asset_timeframes
 
 logger = logging.getLogger(__name__)
+
+# Temporary, to test the market-shock detector (docs/market-shocks.md) on 1m:
+# every asset's 1m candles over this window too.
+SHOCK_BACKFILL = timedelta(hours=96)
 
 
 async def _backfill_asset(
@@ -86,6 +91,24 @@ async def main() -> None:
             for asset, timeframes in timeframes_by_asset.items()
         )
     )
+    await _backfill_shock_candles(adapter, end)
+
+
+async def _backfill_shock_candles(adapter: MarketAdapter, end: datetime) -> None:
+    """Temporary: every listed asset's 1m candles over SHOCK_BACKFILL."""
+    assets = sorted(a for a in await configured_assets() if adapter.is_listed(a))
+    start_ms = int((end - SHOCK_BACKFILL).timestamp() * 1000)
+    end_ms = int(end.timestamp() * 1000)
+
+    async def one(asset: str) -> None:
+        try:
+            n = await backfill_candles(adapter, asset, "1m", start_ms, end_ms)
+        except Exception:
+            logger.exception("1m backfill failed for %s - skipping it", asset)
+            return
+        logger.info("backfilled %s: %d 1m candles", asset, n)
+
+    await asyncio.gather(*(one(a) for a in assets))
 
 
 if __name__ == "__main__":
