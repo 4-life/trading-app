@@ -5,7 +5,8 @@
    fixed initial size - and checked against the limits, and held back for
    SHOCK_BLOCK after a market shock against them (shock_state); an add, averaging down,
    is sized by the paper and needs free cash);
-2. records each mode's equity (once a minute) for drawdown / daily loss;
+2. records each mode's equity (once a minute) for drawdown / daily loss -
+   and alerts new market shocks (once a minute, shock_state);
 3. disables papers whose realized loss reached PAPER_LOSS_DISABLE_PCT of
    their budget;
 4. liquidates in the execution engine's place if its heartbeat is stale.
@@ -39,7 +40,12 @@ from app.execution_engine.models import (
 from app.executors.position_management import AVERAGE_DOWN, add_terms
 from app.market_data.collector import PRICE_INTERVAL
 from app.market_data.models import Candle
-from app.market_data.shock_state import SHOCK_BLOCK, entry_blocked, recent_shocks
+from app.market_data.shock_state import (
+    SHOCK_BLOCK,
+    entry_blocked,
+    notify_new_shocks,
+    recent_shocks,
+)
 from app.notifications.alerts import alert
 from app.papers.models import Paper
 from app.risk_engine.blocks import block_paper, is_entry_blocked, unblock_paper
@@ -53,6 +59,7 @@ from app.watchdog.redis_client import heartbeat_age_seconds, is_kill_switch_acti
 logger = logging.getLogger(__name__)
 
 EQUITY_SNAPSHOT_SECONDS = 60
+SHOCK_ALERT_SECONDS = 60  # how often new market shocks are looked for (and alerted)
 
 
 class Rejected(Exception):
@@ -507,6 +514,7 @@ class RiskEngine:
     def __init__(self, adapter: MarketAdapter) -> None:
         self._adapter = adapter
         self._last_equity_snapshot = 0.0
+        self._last_shock_check = 0.0
 
     async def run_once(self) -> None:
         for step in (
@@ -514,6 +522,7 @@ class RiskEngine:
             self._record_equity,
             _disable_losing_papers,
             self._liquidation_fallback,
+            self._notify_shocks,
         ):
             try:
                 await step()
@@ -525,3 +534,10 @@ class RiskEngine:
 
     async def _liquidation_fallback(self) -> None:
         await _liquidation_fallback(self._adapter)
+
+    async def _notify_shocks(self) -> None:
+        """New market shocks to Telegram (docs/market-shocks.md), once a minute."""
+        if time.time() - self._last_shock_check < SHOCK_ALERT_SECONDS:
+            return
+        self._last_shock_check = time.time()
+        await notify_new_shocks()

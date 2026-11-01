@@ -1,6 +1,6 @@
 # Market Shocks
 
-A detector of sudden market moves — a crash on bad news (an exchange hack), a coin's own rally (good news) — from the candles alone, no news feed (`backend/app/market_data/shocks.py`). Every [strategy chart](dashboard.md#strategy-chart) marks its events, so they can be checked against the real news, and the [risk engine](risk-engine.md#responsibilities) holds back the entries against one for 6 hours: a panic the longs, a bullrun the shorts. The backtests apply the same block from the same shocks: an averaging paper's backtest and its sweep open no position against one (a reopen in trend neither); a single paper's backtest leaves out the trades it would have held back (not its exit sweep). The backtest log lists each entry held back: "paper 94: long entry at 2026-10-29 20:45 held back - market panic (BTC −2.5% in 1h · …, detected 2026-10-29 20:44)".
+A detector of sudden market moves — a crash on bad news (an exchange hack), a coin's own rally (good news) — from the candles alone, no news feed (`backend/app/market_data/shocks.py`). Every [strategy chart](dashboard.md#strategy-chart) marks its events, so they can be checked against the real news, and the [risk engine](risk-engine.md#responsibilities) holds back the entries against one for 6 hours: a panic the longs, a bullrun the shorts. The backtests apply the same block from the same shocks: an averaging paper's backtest and its sweep open no position against one (a reopen in trend neither); a single paper's backtest leaves out the trades it would have held back (not its exit sweep). A Keltner averaging position's strategy sell also waits while a shock in its favour is under 6 hours old ([riding a bullrun](keltner-strategy-engine.md#averaging)). The backtest log lists each entry held back: "paper 94: long entry at 2026-10-29 20:45 held back - market panic (BTC −2.5% in 1h · …, detected 2026-10-29 20:44)".
 
 ## Events
 
@@ -19,6 +19,8 @@ From every coin's closed **1m** candles, BTC included — so an event shows with
 - **One event of a kind per 6 hours** — its first candle. The dot sits on the chart candle it was detected in; the hover box shows the exact time it was detected (the close of the 1m candle that showed it).
 - The hover box shows what triggered it, e.g. "market panic: BTC −3.1% in 1h · 11 of 13 coins down · volume 5.2×".
 - A market event shows on every chart; a coin event on that coin's only.
+
+**Telegram** — the risk engine looks for new shocks once a minute (every coin's closed 1m candles) and [alerts](watchdog.md#alerting) each one once (marked in Redis, `shock:alerted:*`): the market's, and every collected coin's own — a panic as a warning, a bullrun as info: "market panic detected 2026-10-29 20:44 UTC: BTC −2.5% in 1h · 6 of 6 coins down · volume 7.9× - new longs held back until 02:44 UTC". Only shocks detected within the last hour are alerted, so a restart doesn't resend old ones.
 
 The thresholds are constants at the top of the module — tuned once the dots have been checked against the news.
 

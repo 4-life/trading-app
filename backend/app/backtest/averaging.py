@@ -97,7 +97,7 @@ from app.executors.position_management import (
     unwound_unit,
 )
 from app.market_data.limits import Limits, market_limits
-from app.market_data.shock_state import entry_blocked
+from app.market_data.shock_state import entry_blocked, exit_held
 from app.market_data.shocks import Shock
 from app.notifications.error_reporting import run_service
 from app.papers.models import Paper
@@ -459,7 +459,8 @@ def simulate(
     `guard`: its own rules (GUARDS) - which entries open and
     its broken sells; `shocks`: the market shocks - no entry against one
     for SHOCK_BLOCK (the risk engine's rule), each one held back added to
-    `held_back`."""
+    `held_back`; with a `guard`, no strategy sell while one in the position's
+    favour is under SHOCK_BLOCK old."""
     step = bars[1].time - bars[0].time if len(bars) > 1 else timedelta(0)
 
     def blocked(direction: str, bar: Bar) -> bool:
@@ -521,6 +522,9 @@ def simulate(
                 level = pos.next_unwind(buffer)
             sell = sells[direction].get(bar.time)
             if guard is not None and guard.sell_broken(direction, i, entry):
+                sell = None
+            if guard is not None and exit_held(shocks, direction, bar.time + step) is not None:
+                # A shock in its favour under SHOCK_BLOCK old: the sell waits (as live).
                 sell = None
             margin = pos.margin
             if rules.intraday:

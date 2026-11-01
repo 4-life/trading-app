@@ -6,6 +6,7 @@ from app.backtest.averaging import Rules, simulate
 from app.backtest.bars import Bar, SimTrade, exit_at
 from app.executors.keltner_averaging import KeltnerGuard
 from app.executors.position_management import TAKE_PROFIT_EXIT
+from app.market_data.shocks import Shock
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
 # $10 at 10x ($100 at 100: one unit), TP 30% of the margin ($3); adds at half the margin lost (95).
@@ -125,3 +126,18 @@ def test_a_loss_never_closes_the_position_only_a_sell_above_the_take_profit() ->
     exits = [exit_at("long", bars[4], "keltner_sell")]
     [t] = simulate(bars, [], RULES, signals_held=[_buy(0, 100)], exits=exits, guard=g)
     assert (t.closed_at, t.exit_reason) == (bars[4].time, f"{TAKE_PROFIT_EXIT}:keltner_sell")
+
+
+def test_a_sell_inside_a_bullrun_waits_for_the_next_one() -> None:
+    # A bullrun detected at hour 3: the Sell at 4 (close 5h) waits; the one at
+    # 10 (close 11h, past 3h + 6h) closes.
+    closes = [100.0, 102.0, 104.0, 105.0, 106.0] + [106.0] * 7
+    bars = _bars(closes)
+    line: list[float | None] = [90.0, 91.0, *([92.0] * 10)]
+    g = _guard(closes, line=line, sell=frozenset({4, 10}))
+    exits = [exit_at("long", bars[4], "keltner_sell"), exit_at("long", bars[10], "keltner_sell")]
+    bullrun = Shock(T0 + timedelta(hours=2), T0 + timedelta(hours=3), "bullrun", "market", "")
+    [t] = simulate(
+        bars, [], RULES, signals_held=[_buy(0, 100)], exits=exits, guard=g, shocks=[bullrun]
+    )
+    assert t.closed_at == bars[10].time

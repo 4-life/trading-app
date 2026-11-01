@@ -15,7 +15,9 @@ from app.db import async_session
 from app.feature_engine.engine import INTERVAL_MINUTES
 from app.market_data.models import Candle
 from app.market_data.shocks import Series, Shock, lookback, market_shocks
+from app.notifications.alerts import Level, alert
 from app.papers.models import REGIME_ASSET
+from app.watchdog.redis_client import get_redis
 
 # The detector's own timeframe - finer than any paper's: an event shows within a minute.
 SHOCK_INTERVAL = "1m"
@@ -30,6 +32,8 @@ SHOCK_COVERAGE = timedelta(hours=4)
 # A shock holds back the entries against it this long: a panic the longs, a
 # bullrun the shorts - the market's, or the coin's own.
 SHOCK_BLOCK = timedelta(hours=6)
+# New shocks are alerted (Telegram) when detected within this long - once each.
+ALERT_WINDOW = timedelta(hours=1)
 
 _recent: dict[tuple[str, timedelta], tuple[float, list[Shock]]] = {}
 
@@ -81,14 +85,24 @@ async def detect(
     return sorted((s for s in found if s.time >= first), key=lambda s: s.time)
 
 
-def entry_blocked(shocks: Sequence[Shock], direction: str, at: datetime) -> Shock | None:
-    """The shock holding back an entry in `direction` at `at`: a panic a long,
-    a bullrun a short, detected at or before `at` within SHOCK_BLOCK - the latest."""
-    against = "panic" if direction == "long" else "bullrun"
+def _active(shocks: Sequence[Shock], kind: str, at: datetime) -> Shock | None:
+    """The latest `kind` shock detected at or before `at` within SHOCK_BLOCK."""
     hits = [
-        s for s in shocks if s.kind == against and s.detected_at <= at < s.detected_at + SHOCK_BLOCK
+        s for s in shocks if s.kind == kind and s.detected_at <= at < s.detected_at + SHOCK_BLOCK
     ]
     return hits[-1] if hits else None
+
+
+def entry_blocked(shocks: Sequence[Shock], direction: str, at: datetime) -> Shock | None:
+    """The shock holding back an entry in `direction` at `at`: a panic a long,
+    a bullrun a short."""
+    return _active(shocks, "panic" if direction == "long" else "bullrun", at)
+
+
+def exit_held(shocks: Sequence[Shock], direction: str, at: datetime) -> Shock | None:
+    """The shock in a `direction` position's favour at `at` - a bullrun a
+    long's, a panic a short's: its strategy exit waits (Keltner averaging)."""
+    return _active(shocks, "bullrun" if direction == "long" else "panic", at)
 
 
 async def recent_shocks(asset: str, span: timedelta) -> list[Shock]:
@@ -108,3 +122,40 @@ async def recent_shocks(asset: str, span: timedelta) -> list[Shock]:
     shocks = [s for s in found if s.detected_at >= now - span]
     _recent[(asset, span)] = (time.monotonic(), shocks)
     return shocks
+
+
+def _alert_text(asset: str, shock: Shock) -> str:
+    scope = "market" if shock.scope == "market" else asset
+    side = "longs" if shock.kind == "panic" else "shorts"
+    until = shock.detected_at + SHOCK_BLOCK
+    return (
+        f"{scope} {shock.kind} detected {shock.detected_at:%Y-%m-%d %H:%M} UTC: {shock.text}"
+        f" - new {side} held back until {until:%H:%M} UTC"
+    )
+
+
+async def notify_new_shocks() -> None:
+    """Alerts each shock detected within the last ALERT_WINDOW once (marked
+    in Redis): the market's, and every collected coin's own - from every
+    coin's closed 1m candles."""
+    now = datetime.now(UTC)
+    start = now - ALERT_WINDOW - SHOCK_STEP
+    async with async_session() as session:
+        series = await load_series(
+            session, SHOCK_INTERVAL, start - lookback(SHOCK_STEP) * SHOCK_STEP, now - SHOCK_STEP
+        )
+
+    def find() -> list[tuple[str, Shock]]:
+        found = [(REGIME_ASSET, s) for s in market_shocks(series, REGIME_ASSET, SHOCK_STEP, start)]
+        for asset in sorted(a for a in series if a != REGIME_ASSET):
+            shocks = market_shocks(series, asset, SHOCK_STEP, start)
+            found += [(asset, s) for s in shocks if s.scope == "coin"]
+        return found
+
+    redis = get_redis()
+    for asset, shock in await asyncio.to_thread(find):
+        scope = "market" if shock.scope == "market" else asset
+        key = f"shock:alerted:{scope}:{shock.kind}:{shock.time.isoformat()}"
+        if await redis.set(key, 1, ex=int(SHOCK_BLOCK.total_seconds()) + 3600, nx=True):
+            level: Level = "warning" if shock.kind == "panic" else "info"
+            await alert("market-shocks", level, _alert_text(asset, shock))

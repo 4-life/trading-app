@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
-from app.market_data.shock_state import entry_blocked
+from app.market_data.shock_state import _alert_text, entry_blocked, exit_held
 from app.market_data.shocks import Series, Shock, market_shocks
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
@@ -92,3 +92,23 @@ def test_a_panic_blocks_longs_and_a_bullrun_shorts_for_six_hours() -> None:
     assert entry_blocked([panic], "short", at) is None
     assert entry_blocked([panic], "long", T0) is None  # before it was detected
     assert entry_blocked([panic], "long", T0 + STEP + timedelta(hours=6)) is None
+
+
+def test_a_bullrun_holds_a_longs_exit_and_a_panic_a_shorts() -> None:
+    panic = Shock(T0, T0 + STEP, "panic", "market", "")
+    bullrun = Shock(T0, T0 + STEP, "bullrun", "coin", "")
+    at = T0 + 2 * STEP
+    assert exit_held([bullrun], "long", at) == bullrun
+    assert exit_held([panic], "short", at) == panic
+    assert exit_held([panic], "long", at) is None
+
+
+def test_the_alert_says_what_happened_and_what_is_held_back() -> None:
+    t = datetime(2026, 10, 29, 20, 44, tzinfo=UTC)
+    panic = Shock(t - STEP, t, "panic", "market", "BTC -2.5% in 1h")
+    assert _alert_text("BTC", panic) == (
+        "market panic detected 2026-10-29 20:44 UTC: BTC -2.5% in 1h"
+        " - new longs held back until 02:44 UTC"
+    )
+    bullrun = Shock(t - STEP, t, "bullrun", "coin", "HYPE +6%")
+    assert _alert_text("HYPE", bullrun).startswith("HYPE bullrun detected")

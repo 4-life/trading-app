@@ -46,5 +46,16 @@ All three steps update the same `trading_decisions` row.
 
 The registry is the list of papers and their state (mode, enabled/disabled, profitability), stored in [postgres](postgres.md). A paper is disabled manually or by the risk engine; see [papers: Lifecycle](papers.md#lifecycle).
 
+
+## ATR Stop-Loss
+
+A stop-loss price any strategy can ask for (`backend/app/executors/atr_stop.py`) — a port of the TradingView "Average True Range Stop Loss Finder" with **SMA** smoothing, length **20** and multiplier **1.2**:
+
+- **ATR** — the simple average of the last 20 true ranges (the candle's range, or the gap from the previous close if bigger).
+- **Long** — the last closed candle's **low − ATR × 1.2**; **short** — its **high + ATR × 1.2**.
+- `stop_loss(asset, timeframe, direction)` reads the last 21 closed candles at that timeframe; `None` with fewer.
+
+Nothing uses it yet.
+
 ---
 [← Back to README](../README.md)

@@ -38,6 +38,7 @@ from app.executors.position_management import (
 from app.feature_engine.models import Feature
 from app.market_data.limits import market_limits
 from app.market_data.models import Candle, Trade
+from app.market_data.shock_state import SHOCK_BLOCK, exit_held, recent_shocks
 from app.order_queue import AUTO_TRADING_OFF, Direction, Signal, queue_decision, reject_decision
 from app.papers.models import TRADING_KINDS, Paper
 from app.risk_engine.blocks import is_entry_blocked
@@ -293,6 +294,13 @@ async def _already_queued(paper: Paper, signal: Signal, switched_off: bool) -> b
     return found is not None
 
 
+async def _exit_held(paper: Paper, direction: Direction) -> bool:
+    """A market shock in the position's favour (exit_held) is under
+    SHOCK_BLOCK old: its strategy sell waits - a Guard's paper (Keltner)."""
+    shocks = await recent_shocks(paper.asset, SHOCK_BLOCK)
+    return exit_held(shocks, direction, datetime.now(UTC)) is not None
+
+
 async def _buys(position: Position) -> list[tuple[datetime, Decimal, Decimal]]:
     """The position's filled opening orders (its first entry and every add),
     oldest first, as (time, fill price, size)."""
@@ -349,7 +357,8 @@ async def _averaging(
     lowest unit but the lowest (kept to the close; with a Guard: but its
     core) at the next-higher unit's price (unwind_level), else its take-profit - an
     intraday paper's at once, otherwise the strategy's sell once the gain
-    has reached it, unless its Guard breaks it (the strategy's other exits
+    has reached it, unless its Guard breaks it or a market shock in its
+    favour holds it (_exit_held; the strategy's other exits
     are off - it holds through the dips), else a signal add - the strategy's
     entry signal - or its Guard's strength add; and when its last buy filled."""
     buys = await _buys(position)
@@ -389,6 +398,8 @@ async def _averaging(
     elif signal is None:
         sell = await strategy.decide(tick)
         if sell is not None and guard is not None and guard.sell_broken(direction):
+            sell = None
+        if sell is not None and guard is not None and await _exit_held(paper, direction):
             sell = None
         if sell is not None:
             signal = take_profit_sell(
