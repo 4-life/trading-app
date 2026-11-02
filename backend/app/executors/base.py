@@ -90,6 +90,10 @@ class Guard(Protocol):
         """The strategy's sell on that candle is ignored."""
         ...
 
+    def atr_exit(self, direction: Direction) -> Signal | None:
+        """The open position's stop at that candle's close."""
+        ...
+
     def signal_add_allowed(self, direction: Direction, last_buy: Decimal, signal_adds: int) -> bool:
         """That candle's signal add may come: `last_buy` the position's last
         buy price, `signal_adds` its signal adds so far."""
@@ -353,7 +357,8 @@ async def _averaging(
     strategy: Strategy, tick: Tick, position: Position
 ) -> tuple[Signal | None, datetime | None]:
     """An averaging paper's open position (docs/papers.md#averaging-papers) at
-    the latest trade price: its give-up or next add, else selling its
+    the latest trade price: its Guard's ATR stop (at the last closed candle),
+    else its give-up or next add, else selling its
     lowest unit but the lowest (kept to the close; with a Guard: but its
     core) at the next-higher unit's price (unwind_level), else its take-profit - an
     intraday paper's at once, otherwise the strategy's sell once the gain
@@ -369,6 +374,10 @@ async def _averaging(
     direction: Direction = "long" if position.direction == "long" else "short"
     realized = position.realized_pnl_usd or Decimal(0)
     guard = await _guard(strategy, paper, position.opened_at)
+    if guard is not None:
+        stop = guard.atr_exit(direction)
+        if stop is not None:
+            return stop, buys[-1][0]
     # The exchange's maintenance margin: an early liquidation moves the levels up.
     limits = await market_limits(paper.asset)
     signal = managed_signal(

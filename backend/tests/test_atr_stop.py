@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.executors.atr_stop import atr_stop
+from app.executors.atr_stop import atr_lines, atr_series, atr_stop
 
 
 def _candles(
@@ -33,3 +33,20 @@ def test_none_before_enough_candles() -> None:
 def test_its_length_and_multiplier_can_be_set() -> None:
     highs, lows, closes = _candles(15, 102.0, 100.0, 101.0)
     assert atr_stop("long", highs, lows, closes, length=14, multiplier=1.5) == pytest.approx(97.0)
+
+
+def test_the_series_is_the_rolling_average_of_the_true_ranges() -> None:
+    highs, lows, closes = _candles(23, 102.0, 100.0, 101.0)
+    highs[21], lows[21], closes[21] = 105.0, 103.0, 104.0  # a true range of 4
+    series = atr_series(highs, lows, closes)
+    assert series[19] is None
+    assert series[20] == pytest.approx(2.0)
+    assert series[21] == pytest.approx((19 * 2 + 4) / 20)
+
+
+def test_the_lines_are_each_candles_low_and_high_by_atr_times_1_2() -> None:
+    highs, lows, closes = _candles(22, 102.0, 100.0, 101.0)
+    long, short = atr_lines(highs, lows, closes)
+    assert long[19] is None and short[19] is None
+    assert long[20] == pytest.approx(100.0 - 2.4)
+    assert short[21] == pytest.approx(102.0 + 2.4)

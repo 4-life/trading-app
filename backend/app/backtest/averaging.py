@@ -85,6 +85,7 @@ from app.backtest.bars import (
 from app.backtest.models import OPEN_AT_END, BacktestFill, BacktestTrade
 from app.config import settings
 from app.db import async_session
+from app.executors.atr_stop import ATR_STOP_EXIT
 from app.executors.keltner_averaging import KeltnerGuard
 from app.executors.position_management import (
     MAX_DRAWDOWN_EXIT,
@@ -390,7 +391,12 @@ def _can_add(pos: Position, margin: float) -> bool:
     return pos.budget is None or pos.margin + margin <= pos.budget
 
 
-def _down_to_low(pos: Position, bar: Bar, rules: Rules, fee_rate: float) -> AveragingTrade | None:
+def _down_to_low(
+    pos: Position,
+    bar: Bar,
+    rules: Rules,
+    fee_rate: float,
+) -> AveragingTrade | None:
     """The candle's way down to its low: the adds, the give-ups and the
     liquidation it reaches, highest price first (an exit before an add at
     the same price); each fills at its level, or at the open past it. Past
@@ -541,6 +547,9 @@ def simulate(
                 if pnl >= rules.take_profit * margin:
                     reason = f"{TAKE_PROFIT_EXIT}:{sell.exit_reason}"
                     closed = _close(pos, bar, sell.close_price, reason, rules, fee_rate)
+            if closed is None and guard is not None and guard.atr_stopped(direction, i, entry):
+                # The ATR stop at the close: its entry candle's line (as live).
+                closed = _close(pos, bar, bar.close, ATR_STOP_EXIT, rules, fee_rate)
             if closed is not None:
                 trades.append(closed)
                 pos = None

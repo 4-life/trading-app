@@ -6,8 +6,9 @@ backtest (app/backtest/averaging.py) use the same.
 - Entry: a Keltner Buy with the Supertrend red opens a long, a Sell with it
   green a short (the paper's Supertrend, as charted: the lower trendline's
   for a long paper, the upper's for the others). Signal adds take any.
-- No stop: a position closes on the strategy's sell above the take-profit
-  (or the averaging paper's give-up) only.
+- ATR stop: a position closes once a candle closes at or under the ATR
+  stop-loss line (atr_stop: the candle's low - ATR x 1.2, a short's high +)
+  of its entry candle - set once, the adds don't move it.
 - Broken sell: the position's first exit signal since its entry is ignored
   while the Supertrend's line is still where it was at the entry.
 - Core: the first entry and the strength adds are never unwound
@@ -20,6 +21,7 @@ backtest (app/backtest/averaging.py) use the same.
 
 from dataclasses import dataclass
 
+from app.executors.atr_stop import atr_lines
 from app.executors.keltner_signals import keltner_signals
 from app.executors.supertrend import signals as supertrend_signals
 
@@ -40,10 +42,18 @@ class KeltnerGuard:
     line: list[float | None]  # its line
     buy: list[bool]  # Keltner's Buy
     sell: list[bool]  # Keltner's Sell
+    long_stop: list[float | None]  # atr_stop's lines: a long's stop at this candle
+    short_stop: list[float | None]  # a short's
 
     def may_open(self, direction: str, i: int) -> bool:
         """A long only on a red Supertrend, a short only on a green one."""
         return self.trend[i] == -_sign(direction)
+
+    def atr_stopped(self, direction: str, i: int, entry: int) -> bool:
+        """Candle `i` closed at or beyond the ATR stop line of the position's
+        entry candle `entry`."""
+        stop = (self.long_stop if direction == "long" else self.short_stop)[entry]
+        return stop is not None and _sign(direction) * (self.closes[i] - stop) <= 0
 
     def signal_add_allowed(self, direction: str, i: int, last_buy: float, signal_adds: int) -> bool:
         """Candle `i`'s signal add (at its close): under MAX_SIGNAL_ADDS so far
@@ -72,4 +82,5 @@ def keltner_guard(
 ) -> KeltnerGuard:
     st = supertrend_signals(highs, lows, closes, "long" if paper_direction == "long" else "short")
     ks = keltner_signals(highs, lows, closes)
-    return KeltnerGuard(closes, st.trend, st.line, ks.buy, ks.sell)
+    long_stop, short_stop = atr_lines(highs, lows, closes)
+    return KeltnerGuard(closes, st.trend, st.line, ks.buy, ks.sell, long_stop, short_stop)

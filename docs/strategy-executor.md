@@ -55,7 +55,7 @@ A stop-loss price any strategy can ask for (`backend/app/executors/atr_stop.py`)
 - **Long** — the last closed candle's **low − ATR × 1.2**; **short** — its **high + ATR × 1.2**.
 - `stop_loss(asset, timeframe, direction)` reads the last 21 closed candles at that timeframe; `None` with fewer.
 
-Nothing uses it yet.
+Used by [Keltner averaging](keltner-strategy-engine.md#averaging): the line of its entry candle, fixed.
 
 ---
 [← Back to README](../README.md)
