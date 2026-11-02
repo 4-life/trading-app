@@ -117,6 +117,10 @@ export function PositionManagementFields({ paper }: { paper?: Paper }) {
         <Checkbox name="compound_margin" defaultChecked={paper?.compound_margin ?? false} />
         Compound: max margin grows with realized PnL
       </label>
+      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Checkbox name="atr_stop" defaultChecked={paper?.atr_stop ?? false} />
+        ATR stop: close when a candle closes beyond the entry candle&apos;s ATR stop (20, ×1.2)
+      </label>
       <DateField
         name="backtest_start"
         label="Backtest from"

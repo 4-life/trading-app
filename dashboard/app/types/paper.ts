@@ -44,6 +44,8 @@ export interface Paper {
   compound_margin: boolean; // the max margin grows with the realized PnL
   // Intraday: a fresh position after a take-profit while the strategy's trend lasts.
   reopen_in_trend: boolean;
+  // Close on a candle closing beyond the entry candle's ATR stop line.
+  atr_stop: boolean;
   // A single paper's own exits, fractions of the entry price; null: none
   // (docs/papers.md#stop-loss-and-take-profit).
   stop_loss_pct: string | null;

@@ -44,6 +44,7 @@ POSITION_MANAGEMENT = (
     "intraday",
     "compound_margin",
     "reopen_in_trend",
+    "atr_stop",
 )
 
 
@@ -134,6 +135,9 @@ class Paper(Base):
     # Profits compound: the max margin grows with the closed positions' realized
     # PnL (losses shrink it) - otherwise profits are banked, never re-risked.
     compound_margin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Close once a candle closes at or beyond the ATR stop line of the
+    # position's entry candle (app/executors/atr_stop.py).
+    atr_stop: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # A single paper's exits on top of its strategy's own, a share of the entry
     # price: the position closes at the first of these and its strategy's
     # exits (docs/papers.md#stop-loss-and-take-profit). NULL: none.

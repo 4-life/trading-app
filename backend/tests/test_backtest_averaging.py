@@ -7,6 +7,7 @@ import pytest
 
 from app.backtest.averaging import Rules, in_trend, simulate, states_after
 from app.backtest.bars import Bar, Fill, HeldBack, SimTrade, exit_at
+from app.backtest.models import OPEN_AT_END
 from app.backtest.sweep import (
     adverse_move,
     drained_at,
@@ -14,6 +15,7 @@ from app.backtest.sweep import (
     ruin_probability,
     survivable_move,
 )
+from app.executors.atr_stop import ATR_STOP_EXIT
 from app.executors.position_management import (
     MAX_DRAWDOWN_EXIT,
     OUT_OF_MARGIN_EXIT,
@@ -493,3 +495,38 @@ def test_a_market_panic_holds_back_the_entries_for_six_hours() -> None:
     [t] = simulate(bars, entries, PLAN_F, shocks=[panic], held_back=held)
     assert t.opened_at == T0 + timedelta(hours=8)
     assert held == [HeldBack(T0 + timedelta(hours=3), "long", panic)]
+
+
+# 21 candles of range 1 (ATR 1 from the 21st): an entry on candle 21 at 100
+# has its long ATR stop line at 99.5 - 1.2 = 98.3, a short's at 100.5 + 1.2.
+_WARM_UP = [(100.0, 100.5, 99.5, 100.0)] * 22
+ATR_RULES = replace(PLAN_F, atr_stop=True)
+
+
+def test_the_atr_stop_closes_on_a_close_beyond_the_entry_candles_line() -> None:
+    # Candle 22 wicks to 97 but closes at 99 - no stop; candle 23 closes at 98.
+    bars = _bars(*_WARM_UP, (100, 100, 97, 99), (99, 99, 97.5, 98), (98, 98, 98, 98))
+    [t] = simulate(bars, [_entry(21)], ATR_RULES)
+    assert (t.closed_at, t.exit_reason) == (bars[23].time, ATR_STOP_EXIT)
+    assert t.close_price == pytest.approx(98.0, abs=0.1)
+    [short] = simulate(
+        _bars(*_WARM_UP, (100, 102, 100, 102), (102, 102, 102, 102)),
+        [_entry(21, direction="short")],
+        replace(ATR_RULES, direction="short"),
+    )
+    assert (short.closed_at, short.exit_reason) == (T0 + timedelta(hours=22), ATR_STOP_EXIT)
+
+
+def test_without_atr_stop_the_close_beyond_the_line_holds() -> None:
+    bars = _bars(*_WARM_UP, (100, 100, 97.5, 98), (98, 98, 98, 98))
+    [t] = simulate(bars, [_entry(21)], PLAN_F)
+    assert t.exit_reason == OPEN_AT_END
+
+
+def test_an_add_doesnt_move_the_atr_stop() -> None:
+    # The dip add at 95 inside candle 22 leaves the line at 98.3: its close
+    # at 97 is under it - closed.
+    bars = _bars(*_WARM_UP, (100, 100, 94.8, 97), (97, 97, 97, 97))
+    [t] = simulate(bars, [_entry(21)], ATR_RULES)
+    assert (t.closed_at, t.exit_reason) == (bars[22].time, ATR_STOP_EXIT)
+    assert [f.side for f in t.fills] == ["buy", "buy"]

@@ -85,7 +85,7 @@ from app.backtest.bars import (
 from app.backtest.models import OPEN_AT_END, BacktestFill, BacktestTrade
 from app.config import settings
 from app.db import async_session
-from app.executors.atr_stop import ATR_STOP_EXIT
+from app.executors.atr_stop import ATR_STOP_EXIT, atr_lines, stopped
 from app.executors.keltner_averaging import KeltnerGuard
 from app.executors.position_management import (
     MAX_DRAWDOWN_EXIT,
@@ -168,6 +168,9 @@ class Rules:
     # Every fill this much (a share of the price) against the position - a buy
     # higher, a sell lower (a short: mirrored); FILL_SLIPPAGE for a paper.
     slippage: float = 0.0
+    # Close once a candle closes at or beyond the ATR stop line of the
+    # position's entry candle (app/executors/atr_stop.py) - the adds don't move it.
+    atr_stop: bool = False
 
     @property
     def directions(self) -> tuple[str, ...]:
@@ -468,6 +471,13 @@ def simulate(
     `held_back`; with a `guard`, no strategy sell while one in the position's
     favour is under SHOCK_BLOCK old."""
     step = bars[1].time - bars[0].time if len(bars) > 1 else timedelta(0)
+    closes = [b.close for b in bars]
+    no_stops: list[float | None] = [None] * len(bars)
+    long_stop, short_stop = (
+        atr_lines([b.high for b in bars], [b.low for b in bars], closes)
+        if rules.atr_stop
+        else (no_stops, no_stops)
+    )
 
     def blocked(direction: str, bar: Bar) -> bool:
         """A shock holds back an entry at `bar`'s close (noted in `held_back`)."""
@@ -547,7 +557,8 @@ def simulate(
                 if pnl >= rules.take_profit * margin:
                     reason = f"{TAKE_PROFIT_EXIT}:{sell.exit_reason}"
                     closed = _close(pos, bar, sell.close_price, reason, rules, fee_rate)
-            if closed is None and guard is not None and guard.atr_stopped(direction, i, entry):
+            stop = (long_stop if direction == "long" else short_stop)[entry]
+            if closed is None and stopped(direction, bar.close, stop):
                 # The ATR stop at the close: its entry candle's line (as live).
                 closed = _close(pos, bar, bar.close, ATR_STOP_EXIT, rules, fee_rate)
             if closed is not None:
@@ -637,6 +648,7 @@ def rules_of(paper: Paper, limits: Limits | None = None) -> Rules:
         maintenance_notional=None if limits is None else limits.maintenance_margin,
         direction=paper.direction,
         slippage=FILL_SLIPPAGE,
+        atr_stop=bool(paper.atr_stop),
     )
 
 

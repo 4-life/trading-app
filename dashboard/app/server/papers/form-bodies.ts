@@ -17,6 +17,7 @@ export function managementBody(form: FormData): Record<string, string | boolean 
   body.intraday = form.get("intraday") === "on";
   body.compound_margin = form.get("compound_margin") === "on";
   body.reopen_in_trend = form.get("reopen_in_trend") === "on";
+  body.atr_stop = form.get("atr_stop") === "on";
   return body;
 }
 

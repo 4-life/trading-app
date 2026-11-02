@@ -2,11 +2,8 @@
 
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
 from app.backtest.averaging import Rules, simulate
 from app.backtest.bars import Bar, SimTrade, exit_at
-from app.executors.atr_stop import ATR_STOP_EXIT
 from app.executors.keltner_averaging import KeltnerGuard
 from app.executors.position_management import TAKE_PROFIT_EXIT
 from app.market_data.shocks import Shock
@@ -21,20 +18,15 @@ def _guard(
     trend: int = -1,
     line: list[float | None] | None = None,
     sell: frozenset[int] = frozenset(),
-    long_stop: list[float | None] | None = None,
 ) -> KeltnerGuard:
-    """`long_stop`: each candle's ATR stop line for a long (None: no ATR stop)."""
     n = len(closes)
     flat: list[float | None] = [90.0] * n
-    none: list[float | None] = [None] * n
     return KeltnerGuard(
         closes,
         [trend] * n,
         line if line is not None else flat,
         [False] * n,
         [i in sell for i in range(n)],
-        long_stop if long_stop is not None else none,
-        none,
     )
 
 
@@ -66,7 +58,7 @@ def test_the_first_sell_is_broken_while_the_supertrend_line_stays() -> None:
 def test_the_backtest_opens_on_red_only() -> None:
     closes = [100.0, 100.0, 100.0]
     g = _guard(closes)
-    g = KeltnerGuard(g.closes, [1, -1, -1], g.line, g.buy, g.sell, g.long_stop, g.short_stop)
+    g = KeltnerGuard(g.closes, [1, -1, -1], g.line, g.buy, g.sell)
     [t] = simulate(_bars(closes), [], RULES, signals_held=[_buy(0, 100), _buy(1, 100)], guard=g)
     assert t.opened_at == T0 + timedelta(hours=1)
 
@@ -89,7 +81,7 @@ def test_a_signal_add_needs_one_percent_below_the_last_buy_and_at_most_five() ->
 
 def test_a_strength_add_on_the_supertrend_flip_in_profit() -> None:
     g = _guard([100.0, 101.0])
-    g = KeltnerGuard(g.closes, [-1, 1], g.line, g.buy, g.sell, g.long_stop, g.short_stop)
+    g = KeltnerGuard(g.closes, [-1, 1], g.line, g.buy, g.sell)
     assert g.strength_add("long", 1, pnl=1.0)
     assert not g.strength_add("long", 1, pnl=-1.0)
     assert not g.strength_add("short", 1, pnl=1.0)  # a short's flip is to red
@@ -115,38 +107,12 @@ def test_the_backtest_adds_on_strength_and_never_unwinds_it() -> None:
     # In at 100; the Supertrend flips green at 2 in profit (102): a core add.
     closes = [100.0, 101.0, 102.0, 105.0, 105.0]
     g = _guard(closes)
-    g = KeltnerGuard(g.closes, [-1, -1, 1, 1, 1], g.line, g.buy, g.sell, g.long_stop, g.short_stop)
+    g = KeltnerGuard(g.closes, [-1, -1, 1, 1, 1], g.line, g.buy, g.sell)
     [t] = simulate(_bars(closes), [], RULES, signals_held=[_buy(0, 100)], guard=g)
     assert [(f.side, f.time, f.price) for f in t.fills] == [
         ("buy", T0, 100.0),
         ("buy", T0 + timedelta(hours=2), 102.0),
     ]
-
-
-def test_the_atr_stop_is_the_entry_candles_line_on_a_close_beyond_it() -> None:
-    # In at 100 on candle 0, its line 97.6. Candle 1 dips to 97 but closes at
-    # 99 - a wick, no stop; candle 2 closes at 97.5: closed there.
-    closes = [100.0, 99.0, 97.5, 97.5]
-    bars = _bars(closes)
-    bars[1] = Bar(bars[1].time, 100.0, 100.0, 97.0, 99.0)
-    stops: list[float | None] = [97.6, 96.0, 96.0, 96.0]
-    g = _guard(closes, long_stop=stops)
-    [t] = simulate(bars, [], RULES, signals_held=[_buy(0, 100)], guard=g)
-    assert (t.closed_at, t.exit_reason) == (bars[2].time, ATR_STOP_EXIT)
-    assert t.close_price == pytest.approx(97.5, abs=0.1)  # less the slippage
-
-
-def test_an_add_doesnt_move_the_atr_stop() -> None:
-    # In on candle 0 (line 96). The dip add at 95 inside candle 2 leaves it
-    # there: candle 2 closes at 95.5, under it - closed.
-    closes = [100.0, 98.0, 95.5, 95.5]
-    bars = _bars(closes)
-    bars[2] = Bar(bars[2].time, 98.0, 98.0, 94.8, 95.5)
-    stops: list[float | None] = [96.0, 94.5, 93.0, 93.0]
-    g = _guard(closes, long_stop=stops)
-    [t] = simulate(bars, [], RULES, signals_held=[_buy(0, 100)], guard=g)
-    assert (t.closed_at, t.exit_reason) == (bars[2].time, ATR_STOP_EXIT)
-    assert [f.side for f in t.fills] == ["buy", "buy"]
 
 
 def test_a_sell_inside_a_bullrun_waits_for_the_next_one() -> None:

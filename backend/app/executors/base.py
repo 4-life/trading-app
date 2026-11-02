@@ -21,6 +21,7 @@ from app.config import settings
 from app.db import async_session
 from app.execution_engine.demo import open_side
 from app.execution_engine.models import IN_FLIGHT_OUTCOMES, Order, Position, TradingDecision
+from app.executors.atr_stop import ATR_STOP_EXIT, LENGTH, atr_lines, atr_stop, stopped
 from app.executors.paper_exits import paper_exit, with_paper_levels
 from app.executors.position_management import (
     REOPEN_IN_TREND,
@@ -35,6 +36,7 @@ from app.executors.position_management import (
     take_profit_sell,
     unwind_buffer,
 )
+from app.feature_engine.engine import INTERVAL_MINUTES
 from app.feature_engine.models import Feature
 from app.market_data.limits import market_limits
 from app.market_data.models import Candle, Trade
@@ -90,10 +92,6 @@ class Guard(Protocol):
         """The strategy's sell on that candle is ignored."""
         ...
 
-    def atr_exit(self, direction: Direction) -> Signal | None:
-        """The open position's stop at that candle's close."""
-        ...
-
     def signal_add_allowed(self, direction: Direction, last_buy: Decimal, signal_adds: int) -> bool:
         """That candle's signal add may come: `last_buy` the position's last
         buy price, `signal_adds` its signal adds so far."""
@@ -137,6 +135,40 @@ async def recent_candles(asset: str, timeframe: str, limit: int) -> list[Candle]
             .limit(limit + 1)
         )
         return list(reversed(rows.all()[1:]))
+
+
+async def atr_stop_loss(asset: str, timeframe: str, direction: Direction) -> Decimal | None:
+    """atr_stop's stop-loss for a `direction` position on `asset` now: on its
+    last closed candle at `timeframe`."""
+    candles = await recent_candles(asset, timeframe, LENGTH + 1)
+    stop = atr_stop(
+        direction,
+        [float(c.high) for c in candles],
+        [float(c.low) for c in candles],
+        [float(c.close) for c in candles],
+    )
+    return None if stop is None else Decimal(str(stop))
+
+
+async def _atr_exit(paper: Paper, opened_at: datetime, direction: Direction) -> Signal | None:
+    """An `atr_stop` averaging paper's close: the last closed candle closed at
+    or beyond the ATR stop line of the position's entry candle (the last one
+    closed by the entry) - set once, the adds don't move it."""
+    step = timedelta(minutes=INTERVAL_MINUTES[paper.timeframe])
+    held = int((datetime.now(UTC) - opened_at) / step) + 2
+    candles = await recent_candles(paper.asset, paper.timeframe, LENGTH + 2 + held)
+    closed = [k for k, c in enumerate(candles) if c.open_time + step <= opened_at]
+    if not closed:
+        return None
+    long, short = atr_lines(
+        [float(c.high) for c in candles],
+        [float(c.low) for c in candles],
+        [float(c.close) for c in candles],
+    )
+    stop = (long if direction == "long" else short)[closed[-1]]
+    if not stopped(direction, float(candles[-1].close), stop):
+        return None
+    return Signal("exit", direction, ATR_STOP_EXIT)
 
 
 async def latest_price(asset: str, timeframe: str) -> Decimal | None:
@@ -357,7 +389,7 @@ async def _averaging(
     strategy: Strategy, tick: Tick, position: Position
 ) -> tuple[Signal | None, datetime | None]:
     """An averaging paper's open position (docs/papers.md#averaging-papers) at
-    the latest trade price: its Guard's ATR stop (at the last closed candle),
+    the latest trade price: its ATR stop with `atr_stop` (_atr_exit),
     else its give-up or next add, else selling its
     lowest unit but the lowest (kept to the close; with a Guard: but its
     core) at the next-higher unit's price (unwind_level), else its take-profit - an
@@ -373,11 +405,11 @@ async def _averaging(
     price = await live_trade_price(paper.asset) or tick.price
     direction: Direction = "long" if position.direction == "long" else "short"
     realized = position.realized_pnl_usd or Decimal(0)
-    guard = await _guard(strategy, paper, position.opened_at)
-    if guard is not None:
-        stop = guard.atr_exit(direction)
+    if paper.atr_stop:
+        stop = await _atr_exit(paper, position.opened_at, direction)
         if stop is not None:
             return stop, buys[-1][0]
+    guard = await _guard(strategy, paper, position.opened_at)
     # The exchange's maintenance margin: an early liquidation moves the levels up.
     limits = await market_limits(paper.asset)
     signal = managed_signal(

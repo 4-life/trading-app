@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from app.executors.atr_stop import ATR_STOP_EXIT
 from app.executors.base import Tick, direction_allowed, last_entry_at, recent_candles, run
 from app.executors.keltner_averaging import KeltnerGuard, keltner_guard
 from app.executors.keltner_signals import keltner_signals
@@ -60,11 +59,6 @@ class LiveGuard:
 
     def sell_broken(self, direction: Direction) -> bool:
         return self.entry is not None and self.rules.sell_broken(direction, self.last, self.entry)
-
-    def atr_exit(self, direction: Direction) -> Signal | None:
-        if self.entry is None or not self.rules.atr_stopped(direction, self.last, self.entry):
-            return None
-        return Signal("exit", direction, ATR_STOP_EXIT)
 
     def signal_add_allowed(self, direction: Direction, last_buy: Decimal, signal_adds: int) -> bool:
         return self.rules.signal_add_allowed(direction, self.last, float(last_buy), signal_adds)

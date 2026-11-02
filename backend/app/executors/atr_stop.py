@@ -1,16 +1,14 @@
 """ATR stop-loss - a port of the "Average True Range Stop Loss Finder"
 TradingView indicator with SMA smoothing, length LENGTH and multiplier
-MULTIPLIER (docs/strategy-executor.md#atr-stop-loss). For any strategy;
-Keltner averaging stops at its entry candle's line
-(app/executors/keltner_averaging.py).
+MULTIPLIER (docs/strategy-executor.md#atr-stop-loss). Pure, for any
+strategy; an averaging paper with `atr_stop` closes at its entry candle's
+line (the averaging backtest, live base._averaging; base.atr_stop_loss: a
+stop for the current price).
 
 A long's stop sits ATR x MULTIPLIER under the candle's low, a short's the
 same above its high - ATR: the simple average of the last LENGTH true
 ranges."""
 
-from decimal import Decimal
-
-from app.executors.base import recent_candles
 from app.order_queue import Direction
 
 LENGTH = 20
@@ -69,14 +67,7 @@ def atr_stop(
     return long[-1] if direction == "long" else short[-1]
 
 
-async def stop_loss(asset: str, timeframe: str, direction: Direction) -> Decimal | None:
-    """The stop-loss for a `direction` position on `asset` now: on its last
-    closed candle at `timeframe`."""
-    candles = await recent_candles(asset, timeframe, LENGTH + 1)
-    stop = atr_stop(
-        direction,
-        [float(c.high) for c in candles],
-        [float(c.low) for c in candles],
-        [float(c.close) for c in candles],
-    )
-    return None if stop is None else Decimal(str(stop))
+def stopped(direction: str, close: float, stop: float | None) -> bool:
+    """A candle's `close` at or beyond the `stop` line (None: none yet)."""
+    sign = 1 if direction == "long" else -1
+    return stop is not None and sign * (close - stop) <= 0

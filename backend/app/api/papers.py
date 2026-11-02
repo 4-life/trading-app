@@ -108,6 +108,8 @@ class PositionManagement(BaseModel):
     compound_margin: bool = False
     # Intraday: reopen after a take-profit while the strategy's trend lasts.
     reopen_in_trend: bool = False
+    # Close on a candle closing beyond the entry candle's ATR stop line.
+    atr_stop: bool = False
 
 
 # An averaging paper's required fields (add_size_usd defaults to initial_size_usd;
@@ -121,7 +123,7 @@ _AVERAGING_REQUIRED = (
 
 def _check_management(kind: str, m: PositionManagement) -> None:
     """Required on an averaging paper, not allowed on the other kinds."""
-    # intraday / compound_margin / reopen_in_trend: False = unset.
+    # intraday / compound_margin / reopen_in_trend / atr_stop: False = unset.
     values = m.model_dump(include=set(POSITION_MANAGEMENT))
     if kind == "averaging":
         missing = [name for name in _AVERAGING_REQUIRED if values[name] is None]

@@ -50,6 +50,9 @@ function ManagementSummary({ paper }: { paper: Paper }) {
   if (paper.max_drawdown_pct !== null) {
     parts.push(`DD ${pct(paper.max_drawdown_pct)}`);
   }
+  if (paper.atr_stop) {
+    parts.push("ATR stop");
+  }
   if (AVERAGING_KINDS.includes(paper.kind)) {
     const initial = Number(paper.initial_size_usd ?? 0);
     // Both: a long's and a short's.
