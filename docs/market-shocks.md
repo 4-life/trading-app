@@ -20,7 +20,7 @@ From every coin's closed **1m** candles, BTC included — so an event shows with
 - The hover box shows what triggered it, e.g. "market panic: BTC −3.1% in 1h · 11 of 13 coins down · volume 5.2×".
 - A market event shows on every chart; a coin event on that coin's only.
 
-**Telegram** — the risk engine looks for new shocks once a minute (every coin's closed 1m candles) and [alerts](watchdog.md#alerting) each one once (marked in Redis, `shock:alerted:*`): the market's, and every collected coin's own — a panic as a warning, a bullrun as info: "market panic detected 2026-10-29 20:44 UTC: BTC −2.5% in 1h · 6 of 6 coins down · volume 7.9× - new longs held back until 02:44 UTC". Only shocks detected within the last hour are alerted, so a restart doesn't resend old ones.
+**Telegram** — the risk engine looks for new shocks once a minute (every coin's closed 1m candles) and [alerts](watchdog.md#alerting) each one once (marked in Redis, `shock:alerted:*`): the market's, and every collected coin's own — a panic as a warning, a bullrun as info: "market panic detected 2026-10-29 20:44 UTC: BTC −2.5% in 1h · 6 of 6 coins down · volume 7.9× - new longs held back until 02:44 UTC". Only shocks detected within the last hour are alerted, so a restart doesn't resend old ones — scanned from the 6h cooldown before that hour, so a shock still going isn't taken for a new one every minute (the risk engine's block the same: it runs 6 hours from the shock's first candle).
 
 The thresholds are constants at the top of the module — tuned once the dots have been checked against the news.
 

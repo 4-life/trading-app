@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import async_session
 from app.feature_engine.engine import INTERVAL_MINUTES
 from app.market_data.models import Candle
-from app.market_data.shocks import Series, Shock, lookback, market_shocks
+from app.market_data.shocks import COOLDOWN, Series, Shock, lookback, market_shocks
 from app.notifications.alerts import Level, alert
 from app.papers.models import REGIME_ASSET
 from app.watchdog.redis_client import get_redis
@@ -107,13 +107,15 @@ def exit_held(shocks: Sequence[Shock], direction: str, at: datetime) -> Shock | 
 
 async def recent_shocks(asset: str, span: timedelta) -> list[Shock]:
     """The shocks on `asset` (the market's, its own) detected within the last
-    `span`, from every coin's closed 1m candles - cached REFRESH_SECONDS."""
+    `span`, from every coin's closed 1m candles - cached REFRESH_SECONDS.
+    Scanned from COOLDOWN earlier: a shock still going at the span's start
+    is the one before, not a new one."""
     cached = _recent.get((asset, span))
     if cached is not None and time.monotonic() - cached[0] < REFRESH_SECONDS:
         return cached[1]
     now = datetime.now(UTC)
     closed_before = now - SHOCK_STEP  # the forming 1m candle left out
-    start = now - span - SHOCK_STEP
+    start = now - span - SHOCK_STEP - COOLDOWN
     async with async_session() as session:
         series = await load_series(
             session, SHOCK_INTERVAL, start - lookback(SHOCK_STEP) * SHOCK_STEP, closed_before
@@ -137,9 +139,10 @@ def _alert_text(asset: str, shock: Shock) -> str:
 async def notify_new_shocks() -> None:
     """Alerts each shock detected within the last ALERT_WINDOW once (marked
     in Redis): the market's, and every collected coin's own - from every
-    coin's closed 1m candles."""
+    coin's closed 1m candles. Scanned from COOLDOWN earlier: a shock still
+    going at the window's start is the one before, not a new one."""
     now = datetime.now(UTC)
-    start = now - ALERT_WINDOW - SHOCK_STEP
+    start = now - ALERT_WINDOW - SHOCK_STEP - COOLDOWN
     async with async_session() as session:
         series = await load_series(
             session, SHOCK_INTERVAL, start - lookback(SHOCK_STEP) * SHOCK_STEP, now - SHOCK_STEP
@@ -150,7 +153,7 @@ async def notify_new_shocks() -> None:
         for asset in sorted(a for a in series if a != REGIME_ASSET):
             shocks = market_shocks(series, asset, SHOCK_STEP, start)
             found += [(asset, s) for s in shocks if s.scope == "coin"]
-        return found
+        return [(a, s) for a, s in found if s.detected_at >= now - ALERT_WINDOW]
 
     redis = get_redis()
     for asset, shock in await asyncio.to_thread(find):

@@ -66,6 +66,19 @@ def test_one_event_per_kind_within_the_cooldown() -> None:
     assert len(market_shocks(series, "BTC", STEP, T0)) == 1
 
 
+def test_a_shock_still_going_is_new_only_scanned_from_inside_it() -> None:
+    # The panic from 152 holds past -2% in 1h for a while: scanned from 160
+    # it's "new" at 160 (the alerts' spam); scanned from before it, one event.
+    series = _market(-0.03, -0.03)
+    _move(series["BTC"], 160, -0.03, 60.0)
+    for coin in ("ETH", "SOL", "BNB"):
+        _move(series[coin], 160, -0.03, 60.0)
+    [late] = market_shocks(series, "BTC", STEP, T0 + 161 * STEP)
+    assert late.time > T0 + 152 * STEP
+    [shock] = market_shocks(series, "BTC", STEP, T0)
+    assert shock.time == T0 + 152 * STEP
+
+
 def test_a_slide_over_four_hours_is_a_panic_too() -> None:
     # -4% over 16 candles: -1% an hour, under the 1h speed; -4% in 4h.
     series = {"BTC": _flat(), "ETH": _flat(), "SOL": _flat(), "BNB": _flat()}
