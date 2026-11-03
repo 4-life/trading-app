@@ -8,7 +8,8 @@ back the entries against one (app/market_data/shock_state.py).
   breadth move or more the same way (skipped with fewer than MIN_COINS
   others with candles), on BTC volume the window's spike x its usual.
 - Coin panic / bullrun (the chart's coin, not BTC): its 4h return beats
-  BTC's by RELATIVE or more (bullrun; trails it: panic), on its own volume
+  BTC's by RELATIVE or more (bullrun; trails it: panic), COIN_SPEED or more
+  of it within the last hour (a jump, not a slow climb), on its own volume
   COIN_VOLUME_SPIKE x its usual.
 
 "Usual" volume: the median volume of the VOLUME_WINDOWS windows before. One
@@ -26,6 +27,9 @@ from app.papers.models import REGIME_ASSET
 BREADTH = 0.7
 MIN_COINS = 3  # breadth needs this many other coins with candles
 RELATIVE = 0.05
+# A coin event's 1h return against BTC's, the same way, at least: a steady
+# 4h climb (ZEC +6.7% vs BTC +0.9% on 2026-11-03) isn't a shock.
+COIN_SPEED = 0.03
 COIN_VOLUME_SPIKE = 3.0
 VOLUME_WINDOWS = 20
 COOLDOWN = timedelta(hours=6)
@@ -159,11 +163,20 @@ def market_shocks(
         if coin is None:
             continue
         own, base = coin.change(t, four), btc.change(t, four)
+        own_hour, base_hour = coin.change(t, hour), btc.change(t, hour)
         own_spike = coin.spike(t, hour)
-        if own is None or base is None or own_spike is None:
+        if own is None or base is None or own_hour is None or base_hour is None:
+            continue
+        if own_spike is None:
             continue
         relative = own - base
-        if abs(relative) >= RELATIVE and own_spike >= COIN_VOLUME_SPIKE:
-            text = f"{asset} {_pct(own)} vs BTC {_pct(base)} in 4h · volume {own_spike:.1f}×"
+        sign = 1 if relative > 0 else -1
+        fast = sign * (own_hour - base_hour) >= COIN_SPEED
+        if abs(relative) >= RELATIVE and fast and own_spike >= COIN_VOLUME_SPIKE:
+            fast_move = _pct(own_hour - base_hour)
+            text = (
+                f"{asset} {_pct(own)} vs BTC {_pct(base)} in 4h ({fast_move} in 1h)"
+                f" · volume {own_spike:.1f}×"
+            )
             emit(t, "bullrun" if relative > 0 else "panic", "coin", text)
     return out

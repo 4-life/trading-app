@@ -10,8 +10,8 @@ From every coin's closed **1m** candles, BTC included — so an event shows with
 |---|---|---|
 | **Market panic** | BTC down fast — **2%** or more within an hour (on BTC volume **4×** its usual), or **3.5%** or more within four hours (volume **2.5×**) — with **70%** of the other coins down in that window too (**1.5%** / **3%** or more); breadth is skipped with fewer than 3 other coins with candles at the timeframe | red dot above the candle, red dashed line |
 | **Market bullrun** | the same, up | green dot below the candle, green dashed line |
-| **Coin panic** (the chart's coin, not BTC) | its 4h return **5%** or more under BTC's, on its own volume **3×** its usual | red |
-| **Coin bullrun** | its 4h return **5%** or more over BTC's, on its own volume **3×** its usual | green |
+| **Coin panic** (the chart's coin, not BTC) | its 4h return **5%** or more under BTC's, **3%** or more of it within the last hour (a drop, not a slow slide), on its own volume **3×** its usual | red |
+| **Coin bullrun** | its 4h return **5%** or more over BTC's, **3%** or more of it within the last hour (a jump, not a slow climb), on its own volume **3×** its usual | green |
 
 - **Usual volume** — the median candle volume of the 20 windows before (20 hours, or 80), times the candles in the window.
 - **Four hours too** — a sell-off can be a slide, not a one-hour crash: the 2026-10-29 Binance hack took BTC −2.5% in its worst hour but −4.2% in four (October's next biggest: −1.6% / −2.0%).

@@ -50,11 +50,19 @@ def test_a_market_bullrun_is_the_panic_mirrored() -> None:
 
 def test_a_coin_bullrun_beats_btc_on_its_own_volume() -> None:
     series = {"BTC": _flat(), "HYPE": _flat(), "ETH": _flat(), "SOL": _flat()}
-    _move(series["HYPE"], 150, 0.06, 40.0, candles=8)
+    _move(series["HYPE"], 150, 0.06, 40.0)  # +6% within an hour
     shocks = market_shocks(series, "HYPE", STEP, T0)
     assert [(s.kind, s.scope) for s in shocks] == [("bullrun", "coin")]
+    assert "in 1h" in shocks[0].text
     # Not on another coin's chart.
     assert market_shocks(series, "ETH", STEP, T0) == []
+
+
+def test_a_coins_slow_climb_isnt_a_shock() -> None:
+    # +6% vs BTC over 4h, on the volume - but 1.5% an hour, under COIN_SPEED.
+    series = {"BTC": _flat(), "HYPE": _flat(), "ETH": _flat(), "SOL": _flat()}
+    _move(series["HYPE"], 150, 0.06, 40.0, candles=16)
+    assert market_shocks(series, "HYPE", STEP, T0) == []
 
 
 def test_one_event_per_kind_within_the_cooldown() -> None:
