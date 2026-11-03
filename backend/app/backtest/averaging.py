@@ -577,10 +577,16 @@ def simulate(
                     )
                     entry = i
             elif _can_add(pos, rules.initial_size):
+                # A signal or strength add buys into the move: held back by a
+                # shock as an entry (the risk engine's rule) - the dip adds aren't.
+                held = entry_blocked(shocks, direction, bar.time + step) is not None
                 last_buy = next(f.price for f in reversed(pos.fills) if f.side == "buy")
-                allowed = guard is None or (
-                    signal is not None
-                    and guard.signal_add_allowed(direction, i, last_buy, pos.signal_adds)
+                allowed = not held and (
+                    guard is None
+                    or (
+                        signal is not None
+                        and guard.signal_add_allowed(direction, i, last_buy, pos.signal_adds)
+                    )
                 )
                 pnl = pos.realized + sign * pos.size * (bar.close - pos.entry)
                 if signal is not None and allowed:
@@ -588,7 +594,7 @@ def simulate(
                     size = rules.initial_size
                     pos.buy(bar.time, signal.entry_price, size, rules.leverage, fee_rate)
                     pos.signal_adds += 1
-                elif guard is not None and guard.strength_add(direction, i, pnl):
+                elif not held and guard is not None and guard.strength_add(direction, i, pnl):
                     # A strength add at the close: a core unit, sized like the first entry.
                     size = rules.initial_size
                     pos.buy(bar.time, bar.close, size, rules.leverage, fee_rate, core=True)

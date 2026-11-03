@@ -128,3 +128,18 @@ def test_a_sell_inside_a_bullrun_waits_for_the_next_one() -> None:
         bars, [], RULES, signals_held=[_buy(0, 100)], exits=exits, guard=g, shocks=[bullrun]
     )
     assert t.closed_at == bars[10].time
+
+
+def test_a_panic_holds_back_the_signal_and_strength_adds() -> None:
+    # As the core-and-spacing test - its signal add at 2 - and a strength
+    # flip at 3, with a panic detected after the entry (1h30): neither add comes.
+    closes = [100.0, 99.5, 98.5, 101.0, 101.0]
+    g = _guard(closes)
+    g = KeltnerGuard(g.closes, [-1, -1, -1, 1, 1], g.line, g.buy, g.sell)
+    signals = [_buy(0, 100), _buy(1, 99.5), _buy(2, 98.5)]
+    panic = Shock(T0 + timedelta(hours=1), T0 + timedelta(minutes=90), "panic", "market", "")
+    [t] = simulate(_bars(closes), [], RULES, signals_held=signals, guard=g, shocks=[panic])
+    assert [f.side for f in t.fills] == ["buy"]
+    # Without it: both.
+    [free] = simulate(_bars(closes), [], RULES, signals_held=signals, guard=g)
+    assert [f.side for f in free.fills] == ["buy", "buy", "sell", "buy"]

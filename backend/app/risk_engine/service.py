@@ -37,7 +37,7 @@ from app.execution_engine.models import (
     Position,
     TradingDecision,
 )
-from app.executors.position_management import AVERAGE_DOWN, add_terms
+from app.executors.position_management import AVERAGE_DOWN, SIGNAL_ADD, STRENGTH_ADD, add_terms
 from app.market_data.collector import PRICE_INTERVAL
 from app.market_data.models import Candle
 from app.market_data.shock_state import (
@@ -64,6 +64,21 @@ SHOCK_ALERT_SECONDS = 60  # how often new market shocks are looked for (and aler
 
 class Rejected(Exception):
     pass
+
+
+class ShockHeld(Rejected):
+    """Held back by a market shock (shock_state.entry_blocked)."""
+
+
+async def _check_shock(paper: Paper, direction: str) -> None:
+    """Raises ShockHeld while a shock holds back a `direction` buy: a panic a
+    long's, a bullrun a short's - the market's or the asset's own."""
+    recent = await recent_shocks(paper.asset, SHOCK_BLOCK)
+    shock = entry_blocked(recent, direction, datetime.now(UTC))
+    if shock is not None:
+        until = (shock.detected_at + SHOCK_BLOCK).strftime("%Y-%m-%d %H:%M UTC")
+        scope = "market" if shock.scope == "market" else paper.asset
+        raise ShockHeld(f"{scope} {shock.kind} ({shock.text}) - no {direction}s until {until}")
 
 
 async def _price(session: AsyncSession, asset: str) -> Decimal | None:
@@ -165,13 +180,7 @@ async def _size_entry(decision: TradingDecision, paper: Paper) -> tuple[Decimal,
         raise Rejected("paper is disabled")
     if await is_kill_switch_active():
         raise Rejected("watchdog kill switch active")
-    recent = await recent_shocks(paper.asset, SHOCK_BLOCK)
-    shock = entry_blocked(recent, decision.direction, datetime.now(UTC))
-    if shock is not None:
-        until = (shock.detected_at + SHOCK_BLOCK).strftime("%Y-%m-%d %H:%M UTC")
-        scope = "market" if shock.scope == "market" else paper.asset
-        side = decision.direction
-        raise Rejected(f"{scope} {shock.kind} ({shock.text}) - no {side}s until {until}")
+    await _check_shock(paper, decision.direction)
     averaging = paper.kind == "averaging"
     if not averaging and await is_entry_blocked(paper.executor, paper.id):
         raise Rejected("entries blocked by the risk engine")
@@ -262,18 +271,21 @@ def _low_margin_warning(
     )
 
 
-async def _size_add(paper: Paper, reason: str) -> tuple[Decimal, str | None]:
+async def _size_add(paper: Paper, direction: str, reason: str) -> tuple[Decimal, str | None]:
     """An add's notional (docs/papers.md#averaging-papers): a dip add at the
     paper's add size and add leverage, a signal add like the first entry
     (add_terms) - not resized by the limits, a dip add keeps the position
     from a margin call - and the low-margin warning it calls for, if any.
     Rejected beyond the paper's max margin or without free cash for its
     margin and fee - not by a risk block: the open position must be able to
-    defend itself."""
+    defend itself; a signal or strength add (buying into the move, not
+    defending) is held back by a market shock as an entry is."""
     if not paper.enabled:
         raise Rejected("paper is disabled")
     if await is_kill_switch_active():
         raise Rejected("watchdog kill switch active")
+    if reason in (SIGNAL_ADD, STRENGTH_ADD):
+        await _check_shock(paper, direction)
     terms = add_terms(paper, reason)
     if paper.kind != "averaging" or terms is None:
         raise Rejected("averaging down is off for this paper")
@@ -371,7 +383,7 @@ async def _decide(decision_id: int) -> None:
             if paper is None:
                 raise Rejected("paper not found")
             if decision.signal == "add":
-                notional, warning = await _size_add(paper, decision.reason)
+                notional, warning = await _size_add(paper, decision.direction, decision.reason)
                 note = None
             else:
                 notional, note = await _size_entry(decision, paper)
@@ -387,7 +399,13 @@ async def _decide(decision_id: int) -> None:
                     detail=str(exc),
                 )
             )
-            if decision.signal == "add" and await _first_rejected_add(session, decision):
+            # A shock's hold isn't a cash problem: no top-up warning.
+            shock_held = isinstance(exc, ShockHeld)
+            if (
+                decision.signal == "add"
+                and not shock_held
+                and await _first_rejected_add(session, decision)
+            ):
                 warning = (
                     f"paper {decision.paper_id} {decision.asset} ({decision.mode}): add rejected - "
                     f"{exc}. Averaging is paused until there's free balance (retried every "

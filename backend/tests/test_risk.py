@@ -1,5 +1,7 @@
 """Pure unit tests, no database."""
 
+import asyncio
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -8,6 +10,10 @@ from app.backtest.stats import max_drawdown
 from app.budget_allocator import paper_budget_from
 from app.config import settings
 from app.execution_engine.demo import liquidation_due, profitability_pct
+from app.executors.position_management import AVERAGE_DOWN, SIGNAL_ADD, STRENGTH_ADD
+from app.market_data.shocks import Shock
+from app.papers.models import Paper
+from app.risk_engine import service
 from app.risk_engine.engine import evaluate
 from app.risk_engine.models import ProposedOrder
 from app.risk_engine.service import loss_limit
@@ -105,3 +111,40 @@ def test_loss_limit_follows_the_backtest_drawdown() -> None:
     assert limit == pytest.approx(Decimal("0.5")) and "backtest max drawdown 40.0%" in basis
     # never more than the whole budget
     assert loss_limit([10.0, -90.0], 1)[0] == Decimal(1)
+
+
+def test_a_shock_holds_back_a_signal_add_but_not_a_dip_add(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime.now(UTC)
+    panic = Shock(now - timedelta(minutes=2), now - timedelta(minutes=1), "panic", "market", "")
+
+    async def shocks(asset: str, span: timedelta) -> list[Shock]:
+        return [panic]
+
+    async def off() -> bool:
+        return False
+
+    async def cash(paper: Paper, margin: Decimal, notional: Decimal) -> Decimal:
+        return Decimal(1000)
+
+    monkeypatch.setattr(service, "recent_shocks", shocks)
+    monkeypatch.setattr(service, "is_kill_switch_active", off)
+    monkeypatch.setattr(service, "_require_cash", cash)
+    paper = Paper(
+        kind="averaging",
+        enabled=True,
+        asset="BTC",
+        leverage=Decimal(10),
+        initial_size_usd=Decimal(10),
+        add_leverage=Decimal(3),
+        add_size_usd=None,
+        max_margin_usd=None,
+    )
+    for reason in (SIGNAL_ADD, STRENGTH_ADD):
+        with pytest.raises(service.ShockHeld):
+            asyncio.run(service._size_add(paper, "long", reason))
+    notional, _ = asyncio.run(service._size_add(paper, "long", AVERAGE_DOWN))
+    assert notional == Decimal(30)
+    # A panic doesn't hold back a short's.
+    asyncio.run(service._size_add(paper, "short", SIGNAL_ADD))
