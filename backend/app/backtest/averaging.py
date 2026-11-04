@@ -9,8 +9,9 @@ paper's rows in `backtest_trades`, one per position. Run after a backfill:
 
     python -m app.backtest.averaging [YYYY-MM-DD]
 
-Trades start on the given date - else the paper's `backtest_start`, else the
-whole history.
+Trades start on the given date - else the paper's `backtest_start`, else where
+the current price first appears in the history (app/backtest/bars.py
+find_backtest_from).
 
 Flat, a candle the strategy entered a long on opens a position at that
 entry's price: `initial_size_usd` margin at the paper's leverage. Inside
@@ -79,8 +80,10 @@ from app.backtest.bars import (
     HeldBack,
     SimTrade,
     backtest_shocks,
+    find_backtest_from,
     load_bars,
     log_held_back,
+    store_backtest_from,
 )
 from app.backtest.models import OPEN_AT_END, BacktestFill, BacktestTrade
 from app.config import settings
@@ -665,7 +668,8 @@ async def backtest_paper(paper: Paper, start: datetime | None) -> list[Averaging
         return []
     bars = await load_bars(paper)
     rules = rules_of(paper, await market_limits(paper.asset))
-    start = start or paper.backtest_start
+    tested = find_backtest_from(bars, start or paper.backtest_start)
+    start = tested.start
     signals_of = ENTRY_SIGNALS.get(paper.executor)
     exits_of = EXIT_SIGNALS.get(paper.executor)
     guard_of = GUARDS.get(paper.executor)
@@ -692,6 +696,7 @@ async def backtest_paper(paper: Paper, start: datetime | None) -> list[Averaging
     async with async_session() as session, session.begin():
         # Its fills go with it (ON DELETE CASCADE).
         await session.execute(delete(BacktestTrade).where(BacktestTrade.paper_id == paper.id))
+        await store_backtest_from(session, paper, tested)
         for t in trades:
             row = BacktestTrade(
                 paper_id=paper.id,

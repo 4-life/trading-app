@@ -75,6 +75,9 @@ class PaperSweep(Base):
     # The period its runs trade over (train before `split`, test after);
     # NULL until the candles are loaded.
     start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # The current price `start` was found at (app/backtest/bars.py find_backtest_from);
+    # NULL: a set date or the whole history.
+    start_price: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
     split: Mapped[date | None] = mapped_column(Date, nullable=True)
     end: Mapped[date | None] = mapped_column(Date, nullable=True)
     # An averaging sweep's: the asset's adverse move its runs must survive

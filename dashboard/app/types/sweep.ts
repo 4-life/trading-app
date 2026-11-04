@@ -9,6 +9,7 @@ export interface PaperSweep {
   max_leverage: string;
   max_margin: string | null; // an averaging paper's
   start: string | null; // the period its runs trade over; null until loaded
+  start_price: string | null; // the current price `start` was found at; null: not by price
   split: string | null; // train before it, test after
   end: string | null;
   runs_total: number; // 0 until the candles are loaded

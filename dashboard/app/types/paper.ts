@@ -22,6 +22,8 @@ export interface Paper {
   profitability_live: string;
   backtest_return_pct: string | null; // net % of price after fees; null = no backtest
   backtest_net_usd: string | null; // an averaging paper's net PnL after fees; null otherwise
+  backtest_from: string | null; // where its stored backtest started
+  backtest_from_price: string | null; // the current price that date was found at; null: not by price
   enabled: boolean;
   enabled_at: string;
   disabled_by: string | null;
@@ -35,7 +37,7 @@ export interface Paper {
   add_size_usd: string | null;
   max_drawdown_pct: string | null;
   take_profit_pct: string | null;
-  backtest_start: string | null; // where its backtest starts; null = the whole history
+  backtest_start: string | null; // where its backtest starts; null = where the current price first appears
   max_margin_usd: string | null; // the most margin a position may lock; null = no cap
   intraday: boolean; // close at the take-profit at once and keep running
   // The asset's maintenance margin at the exchange, a share of the notional;

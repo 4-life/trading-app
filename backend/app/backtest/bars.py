@@ -1,6 +1,6 @@
-"""The backtests' shared parts: a paper's stored candles as bars, the
-simulated trade and an averaging position's fill, and saving a backtest's
-trades to `backtest_trades`."""
+"""The backtests' shared parts: a paper's stored candles as bars, where a
+backtest starts (find_backtest_from), the simulated trade and an averaging
+position's fill, and saving a backtest's trades to `backtest_trades`."""
 
 import logging
 from collections.abc import Sequence
@@ -9,7 +9,8 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import NamedTuple
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.backtest.models import OPEN_AT_END, BacktestTrade
 from app.db import async_session
@@ -24,6 +25,9 @@ from app.system.exchange_api import maker_fee_rate
 logger = logging.getLogger(__name__)
 
 STOP_SLIPPAGE = 0.0005  # a stop fills this much (% of price) past its level
+# A price first reached later than this before the last candle leaves too
+# little to test: the whole history instead (find_backtest_from).
+MIN_TESTED = timedelta(days=30)
 
 
 @dataclass(frozen=True)
@@ -157,6 +161,40 @@ async def load_bars(paper: Paper) -> list[Bar]:
     ]
 
 
+class BacktestFrom(NamedTuple):
+    """Where a backtest or a sweep starts trading."""
+
+    start: datetime | None  # None: no candles
+    price: float | None  # the current price it was found at; None: not found by price
+
+
+def find_backtest_from(bars: Sequence[Bar], manual: datetime | None) -> BacktestFrom:
+    """`manual`, if given; else the earliest candle whose range holds the
+    current price (the last close), so the price ends where it started and the
+    market's rise or fall doesn't flatter the result; else, reached too
+    recently (MIN_TESTED), the whole history."""
+    if manual is not None:
+        return BacktestFrom(manual, None)
+    if not bars:
+        return BacktestFrom(None, None)
+    price = bars[-1].close
+    first = next(b for b in bars if b.low <= price <= b.high)  # the last candle at the latest
+    if bars[-1].time - first.time < MIN_TESTED:
+        return BacktestFrom(bars[0].time, None)
+    return BacktestFrom(first.time, price)
+
+
+async def store_backtest_from(session: AsyncSession, paper: Paper, tested: BacktestFrom) -> None:
+    """Records on the paper where its stored backtest started."""
+    price = None if tested.price is None else Decimal(str(tested.price))
+    await session.execute(
+        update(Paper)
+        .where(Paper.id == paper.id)
+        .values(backtest_from=tested.start, backtest_from_price=price)
+    )
+    paper.backtest_from, paper.backtest_from_price = tested.start, price
+
+
 async def backtest_shocks(paper: Paper, bars: list[Bar], start: datetime | None) -> list[Shock]:
     """The market shocks over a backtest's candles (from `start`) - the risk
     engine's entry block, as live (docs/market-shocks.md)."""
@@ -211,13 +249,14 @@ def unblocked(
 
 
 async def save_trades(
-    paper: Paper, simulated: list[SimTrade], bars: list[Bar], start: datetime | None
+    paper: Paper, simulated: list[SimTrade], bars: list[Bar], tested: BacktestFrom
 ) -> list[SimTrade]:
     """Replaces the paper's backtest rows with `simulated` (net of the
     provider's maker fees) and logs the totals. A trade still open on the
     last candle has no result yet - left out of the stored trades and every
     statistic. The entries a market shock held back (the risk engine's rule)
     are left out."""
+    start = tested.start
     step = timedelta(minutes=INTERVAL_MINUTES[paper.timeframe])
     simulated, held = unblocked(simulated, await backtest_shocks(paper, bars, start), step)
     log_held_back(paper, held)
@@ -226,6 +265,7 @@ async def save_trades(
     now = datetime.now(UTC)
     async with async_session() as session, session.begin():
         await session.execute(delete(BacktestTrade).where(BacktestTrade.paper_id == paper.id))
+        await store_backtest_from(session, paper, tested)
         session.add_all(
             BacktestTrade(
                 paper_id=paper.id,

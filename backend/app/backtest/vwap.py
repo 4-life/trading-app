@@ -4,7 +4,7 @@ replaces its rows in `backtest_trades`. Run after a backfill:
 
     python -m app.backtest.vwap [YYYY-MM-DD]
 
-Trades start on the given date - the whole history by default.
+Trades start on the given date - by default where the current price first appears (bars.py).
 
 At each signal candle's close: the opposite position closes there, and -
 flat, direction allowing - the signal's opens there. No stop-loss. Fees:
@@ -18,6 +18,7 @@ from app.backtest.bars import (
     Bar,
     SimTrade,
     exit_at,
+    find_backtest_from,
     load_bars,
     paper_exits,
     save_trades,
@@ -115,7 +116,8 @@ def exit_signals(paper: Paper, bars: list[Bar]) -> list[SimTrade]:
 
 async def backtest_paper(paper: Paper, start: datetime | None) -> list[SimTrade]:
     bars = await load_bars(paper)
-    return await save_trades(paper, simulate_paper(paper, bars, start), bars, start)
+    tested = find_backtest_from(bars, start or paper.backtest_start)
+    return await save_trades(paper, simulate_paper(paper, bars, tested.start), bars, tested)
 
 
 async def main() -> None:

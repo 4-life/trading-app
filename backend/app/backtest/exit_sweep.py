@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from itertools import product
 
-from app.backtest.bars import Bar, SimTrade, load_bars, with_paper_exits
+from app.backtest.bars import Bar, SimTrade, find_backtest_from, load_bars, with_paper_exits
 from app.backtest.models import OPEN_AT_END
 from app.backtest.sweep import (
     PAPER_DAYS,
@@ -133,6 +133,7 @@ def run_exit_job(job: ExitJob) -> list[dict[str, object]]:
 @dataclass(frozen=True)
 class ExitSweepPlan:
     start: datetime
+    start_price: float | None  # the current price it was found at (BacktestFrom)
     split: datetime
     end: datetime
     jobs: list[ExitJob]
@@ -149,7 +150,12 @@ async def plan_exit_sweep(paper: Paper, max_leverage: float | None = None) -> Ex
     if len(bars) < 2:
         raise SweepError("no candles")
     end = bars[-1].time
-    start = max(bars[0].time, end - timedelta(days=PAPER_DAYS))
+    tested = find_backtest_from(bars, None)
+    start = (
+        tested.start
+        if tested.start is not None and tested.price is not None
+        else max(bars[0].time, end - timedelta(days=PAPER_DAYS))
+    )
     split = start + (end - start) * SPLIT
     loop = asyncio.get_running_loop()
     with _pool(max_workers=1) as pool:
@@ -176,7 +182,7 @@ async def plan_exit_sweep(paper: Paper, max_leverage: float | None = None) -> Ex
         ExitJob(bars, inputs.trades, leverage, maintenance, fee_rate, start, split)
         for leverage in leverages
     ]
-    return ExitSweepPlan(start, split, end, jobs)
+    return ExitSweepPlan(start, tested.price, split, end, jobs)
 
 
 async def run_exit_sweep(

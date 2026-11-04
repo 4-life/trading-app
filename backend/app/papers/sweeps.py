@@ -219,6 +219,9 @@ async def _run(sweep_id: int, paper: Paper, max_leverage: float, max_margin: flo
                 .where(PaperSweep.id == sweep_id)
                 .values(
                     start=plan.start.date(),
+                    start_price=(
+                        None if plan.start_price is None else Decimal(str(plan.start_price))
+                    ),
                     split=plan.split.date(),
                     end=plan.end.date(),
                     runs_total=plan.runs,

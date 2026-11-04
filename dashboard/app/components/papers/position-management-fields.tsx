@@ -125,7 +125,7 @@ export function PositionManagementFields({ paper }: { paper?: Paper }) {
         name="backtest_start"
         label="Backtest from"
         defaultValue={paper?.backtest_start?.slice(0, 10) ?? ""}
-        emptyText="All history"
+        emptyText="Current price"
       />
       {floor && <p className="w-full text-xs text-muted-foreground">{floor}</p>}
     </div>

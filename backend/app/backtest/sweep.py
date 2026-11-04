@@ -6,7 +6,8 @@ PAPER_LEVERAGES (up to the asset's max leverage) x PAPER_INITIAL_SIZES x
 PAPER_TAKE_PROFITS x PAPER_MODES (hold, intraday, intraday reopening in the
 trend) x compounding on / off (the budget growing with the realized PnL -
 Rules.compound), trading over the same period as the paper's backtest -
-from its `backtest_start`, else its whole stored history, split at SPLIT:
+from its `backtest_start`, else where the current price first appears in the
+history (app/backtest/bars.py find_backtest_from), split at SPLIT:
 train before, test after (a position counts in the part it opened in);
 each run records when its cash fell under the initial size and it stopped
 trading (drained_at) and how far the price can move against its first entry
@@ -42,7 +43,7 @@ from app.backtest.averaging import (
     rules_of,
     simulate,
 )
-from app.backtest.bars import Bar, SimTrade, backtest_shocks, load_bars
+from app.backtest.bars import Bar, SimTrade, backtest_shocks, find_backtest_from, load_bars
 from app.backtest.models import OPEN_AT_END
 from app.executors.keltner_averaging import KeltnerGuard
 from app.executors.position_management import MAX_DRAWDOWN_EXIT, OUT_OF_MARGIN_EXIT
@@ -393,6 +394,7 @@ class SweepPlan:
     """A paper's sweep, ready to run: its period and its chunks."""
 
     start: datetime
+    start_price: float | None  # the current price it was found at (BacktestFrom)
     split: datetime
     end: datetime
     leverages: list[float]
@@ -417,9 +419,9 @@ async def plan_sweep(
     if len(bars) < 2:
         raise SweepError("no candles")
     end = bars[-1].time
-    # The paper's backtest period (app/backtest/averaging.py backtest_paper):
-    # its results compare with the sweep's.
-    start = max(bars[0].time, paper.backtest_start or bars[0].time)
+    # Chosen as the paper's backtest chooses its period (find_backtest_from).
+    tested = find_backtest_from(bars, paper.backtest_start)
+    start = max(bars[0].time, tested.start or bars[0].time)
     if start >= end:
         raise SweepError("the backtest start is after the last candle")
     split = start + (end - start) * SPLIT
@@ -435,10 +437,10 @@ async def plan_sweep(
             paper.direction,
             paper.timeframe,
             bars,
-            paper.backtest_start,
+            start,
         )
     fee_rate = float(await maker_fee_rate())
-    shocks = await backtest_shocks(paper, bars, paper.backtest_start)
+    shocks = await backtest_shocks(paper, bars, start)
     limits = await market_limits(paper.asset)
     base = rules_of(paper, limits)
     if max_margin is not None:
@@ -473,7 +475,9 @@ async def plan_sweep(
         )
         for leverage, initial in product(leverages, PAPER_INITIAL_SIZES)
     ]
-    plan = SweepPlan(start, split, end, leverages, jobs, percentile(moves) if moves else None)
+    plan = SweepPlan(
+        start, tested.price, split, end, leverages, jobs, percentile(moves) if moves else None
+    )
     logger.info(
         "paper %d: leverages %s, add x%g, max $%s, %s -> %s: %d runs",
         paper.id,

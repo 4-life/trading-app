@@ -4,7 +4,7 @@ import { useFetcher } from "react-router";
 
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { formatUsd } from "@/lib/format";
+import { formatPrice, formatUsd } from "@/lib/format";
 import { FIELD_CLASS } from "@/lib/styles";
 import type { ActionResult } from "@/types/action";
 import type { Paper } from "@/types/paper";
@@ -133,7 +133,10 @@ export function SweepPanel({ paper }: { paper: Paper }) {
                   ? `Stopped: ${sweep.runs_done.toLocaleString()} of ${sweep.runs_total.toLocaleString()} runs`
                   : `Failed: ${sweep.error ?? "unknown"} (${sweep.runs_done.toLocaleString()} runs stored)`}
             {sweep.start && sweep.end
-              ? ` · ${sweep.start} → ${sweep.end}, train before ${sweep.split ?? "—"}`
+              ? ` · ${sweep.start} → ${sweep.end}, train before ${sweep.split ?? "—"}` +
+                (sweep.start_price === null
+                  ? " · not started by price"
+                  : ` · started at today's price ${formatPrice(sweep.start_price)}`)
               : ""}
             {/* The asset's max can be 1 / its margin share (×30.03): rounded down, one decimal at most. */}
             {` · max ×${String(Math.floor(Number(sweep.max_leverage) * 10) / 10)}`}

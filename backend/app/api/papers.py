@@ -98,7 +98,8 @@ class PositionManagement(BaseModel):
     add_size_usd: Decimal | None = Field(default=None, gt=0)
     max_drawdown_pct: Decimal | None = Field(default=None, gt=0, lt=1)
     take_profit_pct: Decimal | None = Field(default=None, gt=0)
-    # Where its backtest starts trading; null = the whole stored history.
+    # Where its backtest starts trading; null = where the current price first
+    # appears in the history.
     backtest_start: AwareDatetime | None = None
     # The most margin a position may lock at once (e.g. the cash on the exchange).
     max_margin_usd: Decimal | None = Field(default=None, gt=0)
@@ -170,6 +171,10 @@ class PaperOut(PositionManagement, PaperExits):
     # An averaging paper's net backtest PnL (USD, after fees) over its closed
     # positions - the chart's net; null for the other kinds or no backtest.
     backtest_net_usd: Decimal | None = None
+    # Where its stored backtest started, and the current price that date was
+    # found at (null: a set date or the whole history).
+    backtest_from: datetime | None = None
+    backtest_from_price: Decimal | None = None
     enabled: bool
     enabled_at: datetime
     disabled_by: str | None
@@ -381,6 +386,8 @@ class PaperSweepOut(BaseModel):
     # The period its runs trade over (train before `split`, test after);
     # null until the candles are loaded.
     start: date | None
+    # The current price `start` was found at; null: a set date or the whole history.
+    start_price: Decimal | None
     split: date | None
     end: date | None
     runs_total: int  # 0 until the candles are loaded

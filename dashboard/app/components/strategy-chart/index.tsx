@@ -4,6 +4,7 @@ import { useFetchers, useNavigate, useSearchParams } from "react-router";
 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatPrice } from "@/lib/format";
 import { FIELD_CLASS } from "@/lib/styles";
 import { ASSET_KINDS, AVERAGING_KINDS } from "@/constants/papers";
 import { isPreparing } from "@/lib/papers";
@@ -22,6 +23,23 @@ const HEIGHT_CLASS = "h-[560px]";
 
 const signed = (x: number, digits = 1) => `${x >= 0 ? "+" : ""}${x.toFixed(digits)}%`;
 const tone = (x: number) => (x >= 0 ? "text-green-500" : "text-red-500");
+
+// Where the stored backtest started (docs/papers.md#averaging-papers).
+function TestedFrom({ paper }: { paper: Paper }) {
+  if (paper.backtest_from === null) {
+    return null;
+  }
+  const date = paper.backtest_from.slice(0, 10);
+  return (
+    <p className="text-xs text-muted-foreground">
+      {paper.backtest_from_price !== null
+        ? `Tested from ${date}, the first time the price was at today's ${formatPrice(paper.backtest_from_price)}.`
+        : paper.backtest_start !== null
+          ? `Tested from ${date}, the paper's own date.`
+          : `Tested from ${date}, the whole history: the current price was first reached under 30 days ago.`}
+    </p>
+  );
+}
 
 // Totals of the temporary backtest (docs/vwap-strategy-engine.md#backtest):
 // % of price per trade; at the paper's leverage compounded (each trade on
@@ -248,6 +266,7 @@ export function StrategyChartCard({
             `space-y-2 transition-opacity ${switching ? "pointer-events-none opacity-40" : ""}`
           }
         >
+          {chart && selected && !preparing && <TestedFrom paper={selected} />}
           {chart &&
             chart.backtest.length > 0 &&
             !preparing &&

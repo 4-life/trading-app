@@ -121,8 +121,13 @@ class Paper(Base):
     # The take-profit floor: a strategy sell closes once the PnL is this share
     # of all the margin put in.
     take_profit_pct: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
-    # Where the averaging backtest starts trading; NULL = the whole stored history.
+    # Where the averaging backtest starts trading; NULL = where the current price
+    # first appears in the history (app/backtest/bars.py find_backtest_from).
     backtest_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Where its stored backtest did start, and the current price that date was
+    # found at (NULL: a set date or the whole history).
+    backtest_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    backtest_from_price: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
     # The most margin a position may lock at once - adds beyond it are refused
     # (live by the risk engine, in the backtest skipped); NULL = no cap.
     max_margin_usd: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)

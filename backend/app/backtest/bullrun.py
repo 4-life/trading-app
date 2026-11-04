@@ -4,7 +4,7 @@ and replaces its rows in `backtest_trades`. Run after a backfill:
 
     python -m app.backtest.bullrun [YYYY-MM-DD]
 
-Trades start on the given date - the whole history by default.
+Trades start on the given date - by default where the current price first appears (bars.py).
 
 Candle-level approximation of the live executor (which checks the latest
 trade every 5 s): flat, a candle closing a pullback in an uptrend opens a
@@ -21,7 +21,14 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
-from app.backtest.bars import STOP_SLIPPAGE, Bar, SimTrade, load_bars, save_trades
+from app.backtest.bars import (
+    STOP_SLIPPAGE,
+    Bar,
+    SimTrade,
+    find_backtest_from,
+    load_bars,
+    save_trades,
+)
 from app.backtest.models import OPEN_AT_END
 from app.db import async_session
 from app.executors.base import direction_allowed
@@ -85,8 +92,11 @@ async def backtest_paper(paper: Paper, start: datetime | None) -> list[SimTrade]
     bars = await load_bars(paper)
     both: tuple[Direction, ...] = ("long", "short")
     directions = tuple(d for d in both if direction_allowed(paper.direction, d))
-    simulated = simulate(bars, paper.timeframe, directions, start, stop_slippage=STOP_SLIPPAGE)
-    return await save_trades(paper, simulated, bars, start)
+    tested = find_backtest_from(bars, start or paper.backtest_start)
+    simulated = simulate(
+        bars, paper.timeframe, directions, tested.start, stop_slippage=STOP_SLIPPAGE
+    )
+    return await save_trades(paper, simulated, bars, tested)
 
 
 async def main() -> None:

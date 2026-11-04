@@ -4,7 +4,7 @@ replaces its rows in `backtest_trades`. Run after a backfill:
 
     python -m app.backtest.regime [YYYY-MM-DD]
 
-Trades start on the given date - the whole history by default.
+Trades start on the given date - by default where the current price first appears (bars.py).
 
 Candle-level approximation of the live executor: an entry candle opens the
 position at its close. A candle trading through the stop (from the candles
@@ -29,6 +29,7 @@ from app.backtest.bars import (
     STOP_SLIPPAGE,
     Bar,
     SimTrade,
+    find_backtest_from,
     load_bars,
     paper_exits,
     save_trades,
@@ -207,7 +208,8 @@ def entry_signals(paper: Paper, bars: list[Bar]) -> list[SimTrade]:
 
 async def backtest_paper(paper: Paper, start: datetime | None) -> list[SimTrade]:
     bars = await load_bars(paper)
-    return await save_trades(paper, simulate_paper(paper, bars, start), bars, start)
+    tested = find_backtest_from(bars, start or paper.backtest_start)
+    return await save_trades(paper, simulate_paper(paper, bars, tested.start), bars, tested)
 
 
 async def main() -> None:

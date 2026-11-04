@@ -4,7 +4,7 @@ replaces its rows in `backtest_trades`. Run after a backfill:
 
     python -m app.backtest.keltner [YYYY-MM-DD]
 
-Trades start on the given date - the whole history by default.
+Trades start on the given date - by default where the current price first appears (bars.py).
 
 At each signal candle's close: a Buy opens a long there, a Sell closes it;
 a Sell opens a short, a Buy closes it - where the paper's direction allows
@@ -20,6 +20,7 @@ from app.backtest.bars import (
     Bar,
     SimTrade,
     exit_at,
+    find_backtest_from,
     load_bars,
     paper_exits,
     save_trades,
@@ -108,7 +109,8 @@ def averaging_guard(paper: Paper, bars: list[Bar]) -> KeltnerGuard:
 
 async def backtest_paper(paper: Paper, start: datetime | None) -> list[SimTrade]:
     bars = await load_bars(paper)
-    return await save_trades(paper, simulate_paper(paper, bars, start), bars, start)
+    tested = find_backtest_from(bars, start or paper.backtest_start)
+    return await save_trades(paper, simulate_paper(paper, bars, tested.start), bars, tested)
 
 
 async def main() -> None:
