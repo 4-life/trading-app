@@ -1,6 +1,7 @@
 """Pure unit tests, no database."""
 
 from datetime import UTC, datetime, timedelta
+from random import Random
 
 from app.market_data.shock_state import _alert_text, entry_blocked, exit_held
 from app.market_data.shocks import Series, Shock, market_shocks
@@ -88,10 +89,11 @@ def test_a_shock_still_going_is_new_only_scanned_from_inside_it() -> None:
 
 
 def test_a_slide_over_four_hours_is_a_panic_too() -> None:
-    # -4% over 16 candles: -1% an hour, under the 1h speed; -4% in 4h.
+    # -4% over 16 candles: -1% an hour, under the 1h speed; -4% in 4h. From
+    # 200: too little history yet for the unusual-move rule.
     series = {"BTC": _flat(), "ETH": _flat(), "SOL": _flat(), "BNB": _flat()}
     for coin in series:
-        _move(series[coin], 400, -0.04, 30.0, candles=16)
+        _move(series[coin], 200, -0.04, 30.0, candles=16)
     [shock] = market_shocks(series, "BTC", STEP, T0)
     assert (shock.kind, shock.scope) == ("panic", "market")
     assert "in 4h" in shock.text
@@ -102,6 +104,59 @@ def test_without_enough_coins_breadth_is_skipped() -> None:
     _move(series["BTC"], 150, -0.03, 50.0)
     [shock] = market_shocks(series, "BTC", STEP, T0)
     assert (shock.kind, "no breadth" in shock.text) == ("panic", True)
+
+
+def _noisy(seed: int, sd: float = 0.001) -> Series:
+    """A price jittering `sd` a candle around 100, at the flat volume."""
+    random = Random(seed)
+    return {T0 + k * STEP: (100.0 * (1 + random.gauss(0, sd)), 10.0) for k in range(N)}
+
+
+def _noisy_market() -> dict[str, Series]:
+    return {"BTC": _noisy(1), "ETH": _noisy(2), "SOL": _noisy(3), "BNB": _noisy(4)}
+
+
+def test_a_drop_unusual_for_the_coin_is_its_panic_whatever_btc_does() -> None:
+    # -3% in 30m, BTC flat: far beyond ETH's normal, under the 5% against BTC.
+    series = _noisy_market()
+    _move(series["ETH"], 450, -0.03, 40.0, candles=2)
+    [shock] = market_shocks(series, "ETH", STEP, T0)
+    assert (shock.kind, shock.scope) == ("panic", "coin")
+    assert shock.time in (T0 + 450 * STEP, T0 + 451 * STEP)
+    assert "its normal" in shock.text
+    # Not on another coin's chart.
+    assert market_shocks(series, "SOL", STEP, T0) == []
+
+
+def test_the_same_drop_is_normal_for_a_wild_coin() -> None:
+    series = _noisy_market()
+    series["ETH"] = _noisy(2, sd=0.01)
+    _move(series["ETH"], 450, -0.03, 40.0, candles=2)
+    assert market_shocks(series, "ETH", STEP, T0) == []
+
+
+def test_an_unusual_move_needs_the_volume() -> None:
+    series = _noisy_market()
+    _move(series["ETH"], 450, -0.03, 10.0, candles=2)
+    assert market_shocks(series, "ETH", STEP, T0) == []
+
+
+def test_btcs_unusual_move_is_the_markets_with_breadth() -> None:
+    series = _noisy_market()
+    for coin in series:
+        _move(series[coin], 450, -0.015, 40.0, candles=2)
+    # On any chart, the coins' own unusual moves held back by it.
+    [shock] = market_shocks(series, "ETH", STEP, T0)
+    assert (shock.kind, shock.scope) == ("panic", "market")
+    assert "3 of 3 coins down" in shock.text
+
+
+def test_btcs_unusual_move_alone_is_on_its_chart_only() -> None:
+    series = _noisy_market()
+    _move(series["BTC"], 450, -0.015, 40.0, candles=2)
+    [shock] = market_shocks(series, "BTC", STEP, T0)
+    assert (shock.kind, shock.scope) == ("panic", "coin")
+    assert market_shocks(series, "ETH", STEP, T0) == []
 
 
 def test_a_panic_blocks_longs_and_a_bullrun_shorts_for_six_hours() -> None:

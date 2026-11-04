@@ -11,6 +11,13 @@ back the entries against one (app/market_data/shock_state.py).
   BTC's by RELATIVE or more (bullrun; trails it: panic), COIN_SPEED or more
   of it within the last hour (a jump, not a slow climb), on its own volume
   COIN_VOLUME_SPIKE x its usual.
+- Unusual move, any coin: its UNUSUAL_SPAN move is UNUSUAL x its own normal
+  one or more (the standard deviation of those moves over the UNUSUAL_BASELINE
+  before it) and UNUSUAL_MIN_MOVE at least, its last BURST_SPAN's volume
+  BURST_VOLUME_SPIKE x its usual. BTC's is a market event if BREADTH of the
+  other coins move UNUSUAL_BREADTH_MOVE the same way (skipped with fewer than
+  MIN_COINS), otherwise on BTC's chart only. A coin's waits while a market
+  event of its kind is under COOLDOWN old: a crash isn't an event per coin.
 
 "Usual" volume: the median volume of the VOLUME_WINDOWS windows before. One
 event of a kind per COOLDOWN - its first candle."""
@@ -18,7 +25,9 @@ event of a kind per COOLDOWN - its first candle."""
 from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import cached_property
 from itertools import accumulate
+from math import sqrt
 from statistics import median
 from typing import Literal
 
@@ -33,6 +42,13 @@ COIN_SPEED = 0.03
 COIN_VOLUME_SPIKE = 3.0
 VOLUME_WINDOWS = 20
 COOLDOWN = timedelta(hours=6)
+UNUSUAL_SPAN = timedelta(minutes=30)
+UNUSUAL = 6.0  # x the coin's normal move
+UNUSUAL_MIN_MOVE = 0.01  # a coin hardly moving (a closed stock market) has a tiny normal
+UNUSUAL_BASELINE = timedelta(days=7)
+UNUSUAL_BREADTH_MOVE = 0.01
+BURST_SPAN = timedelta(minutes=15)
+BURST_VOLUME_SPIKE = 3.0
 
 HOUR = timedelta(hours=1)
 FOUR_HOURS = timedelta(hours=4)
@@ -75,7 +91,8 @@ def _candles(span: timedelta, step: timedelta) -> int:
 
 def lookback(step: timedelta) -> int:
     """Candles needed before the first one checked."""
-    return (VOLUME_WINDOWS + 2) * _candles(FOUR_HOURS, step)
+    volume = (VOLUME_WINDOWS + 2) * _candles(FOUR_HOURS, step)
+    return max(volume, _candles(UNUSUAL_BASELINE, step) + 2 * _candles(UNUSUAL_SPAN, step))
 
 
 class _Track:
@@ -111,6 +128,38 @@ class _Track:
         usual = median(before)
         return None if usual == 0 else recent / usual
 
+    @cached_property
+    def _moves(self) -> tuple[list[int], list[float], list[float]]:
+        """Running count, sum and sum of squares of the UNUSUAL_SPAN moves."""
+        n = _candles(UNUSUAL_SPAN, self.step)
+        count, total, squares = [0], [0.0], [0.0]
+        for t in self.times:
+            m = self.change(t, n)
+            count.append(count[-1] + (m is not None))
+            total.append(total[-1] + (m or 0.0))
+            squares.append(squares[-1] + (m or 0.0) ** 2)
+        return count, total, squares
+
+    def unusual(self, t: datetime) -> tuple[float, float] | None:
+        """The UNUSUAL_SPAN move to `t` and how many times the normal one it is
+        - the standard deviation of those moves over the UNUSUAL_BASELINE
+        before it (half of it known at least, else None)."""
+        i = self.at.get(t)
+        n = _candles(UNUSUAL_SPAN, self.step)
+        length = _candles(UNUSUAL_BASELINE, self.step)
+        move = self.change(t, n)
+        if i is None or move is None:
+            return None
+        end = max(0, i - n + 1)
+        begin = max(0, end - length)
+        count, total, squares = self._moves
+        known = count[end] - count[begin]
+        if known < length // 2:
+            return None
+        mean = (total[end] - total[begin]) / known
+        variance = (squares[end] - squares[begin]) / known - mean * mean
+        return None if variance <= 0 else (move, abs(move) / sqrt(variance))
+
     def since(self, start: datetime) -> list[datetime]:
         return self.times[bisect_left(self.times, start) :]
 
@@ -131,6 +180,7 @@ def market_shocks(
     others = [_Track(s, step) for a, s in series.items() if a != REGIME_ASSET]
     coin = _Track(series[asset], step) if asset != REGIME_ASSET and series.get(asset) else None
     hour, four = _candles(HOUR, step), _candles(FOUR_HOURS, step)
+    span, burst = _candles(UNUSUAL_SPAN, step), _candles(BURST_SPAN, step)
     labels = {HOUR: "1h", FOUR_HOURS: "4h"}
     last: dict[tuple[str, str], datetime] = {}
     out: list[Shock] = []
@@ -140,6 +190,22 @@ def market_shocks(
         if at is None or t - at >= COOLDOWN:
             out.append(Shock(t, t + step, kind, scope, text))
         last[(kind, scope)] = t
+
+    def unusual_move(track: _Track, t: datetime) -> tuple[float, float, float] | None:
+        """`track`'s move to `t` if unusual: (the move, x its normal, volume spike)."""
+        found = track.unusual(t)
+        if found is None or found[1] < UNUSUAL or abs(found[0]) < UNUSUAL_MIN_MOVE:
+            return None
+        burst_spike = track.spike(t, burst)
+        if burst_spike is None or burst_spike < BURST_VOLUME_SPIKE:
+            return None
+        return found[0], found[1], burst_spike
+
+    def unusual_text(coin_name: str, found: tuple[float, float, float]) -> str:
+        return (
+            f"{coin_name} {_pct(found[0])} in 30m · {found[1]:.1f}× its normal"
+            f" · volume {found[2]:.1f}×"
+        )
 
     for t in btc.since(start):
         for w in WINDOWS:
@@ -160,8 +226,28 @@ def market_shocks(
             text = f"BTC {_pct(move)} in {labels[w.span]} · {breadth} · volume {spike:.1f}×"
             emit(t, "bullrun" if sign > 0 else "panic", "market", text)
             break
+        btc_unusual = unusual_move(btc, t)
+        if btc_unusual is not None:
+            sign = 1 if btc_unusual[0] > 0 else -1
+            moves = [m for s in others if (m := s.change(t, span)) is not None]
+            same = sum(1 for m in moves if sign * m >= UNUSUAL_BREADTH_MOVE)
+            broad = len(moves) >= MIN_COINS and same / len(moves) >= BREADTH
+            text = unusual_text(REGIME_ASSET, btc_unusual)
+            kind: Kind = "bullrun" if sign > 0 else "panic"
+            if broad or len(moves) < MIN_COINS:
+                way = "up" if sign > 0 else "down"
+                breadth = f"{same} of {len(moves)} coins {way}" if broad else "no breadth"
+                emit(t, kind, "market", f"{text} · {breadth}")
+            elif asset == REGIME_ASSET:
+                emit(t, kind, "coin", text)
         if coin is None:
             continue
+        coin_unusual = unusual_move(coin, t)
+        if coin_unusual is not None:
+            kind = "bullrun" if coin_unusual[0] > 0 else "panic"
+            market_at = last.get((kind, "market"))
+            if market_at is None or t - market_at >= COOLDOWN:
+                emit(t, kind, "coin", unusual_text(asset, coin_unusual))
         own, base = coin.change(t, four), btc.change(t, four)
         own_hour, base_hour = coin.change(t, hour), btc.change(t, hour)
         own_spike = coin.spike(t, hour)
