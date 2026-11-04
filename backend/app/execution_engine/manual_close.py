@@ -26,7 +26,12 @@ from app.execution_engine.engine import (
     entry_fee_share,
     update_profitability,
 )
-from app.execution_engine.models import IN_FLIGHT_OUTCOMES, Position, TradingDecision
+from app.execution_engine.models import (
+    IN_FLIGHT_OUTCOMES,
+    ClosedPosition,
+    Position,
+    TradingDecision,
+)
 from app.executors.base import latest_price
 from app.notifications.trades import notify_closed_on_exchange
 from app.order_queue import Signal, queue_decision
@@ -99,6 +104,7 @@ async def record_closed_on_exchange(position_id: int, close_price: Decimal) -> N
         position.close_price = close_price
         position.closed_at = datetime.now(UTC)
         position.exit_reason = CLOSED_ON_EXCHANGE
+        session.add(ClosedPosition.of(position, close_price, position.realized_pnl_usd))
         await session.flush()
         paper = await session.get(Paper, position.paper_id)
         if paper is not None:

@@ -147,7 +147,7 @@ Demo and live run at the same time; each mode has its own budget, managed by the
 
 ## Demo Reset
 
-The owner can reset demo state at any time. Reset clears everything in demo: balance back to $5000, all demo positions (open and closed), demo orders, demo trading log entries, demo equity history, and every paper's `profitability_demo` back to 0. Live state is never touched.
+The owner can reset demo state at any time. Reset clears everything in demo: balance back to $5000, all demo positions (open and closed, their `closed_positions` records too), demo orders, demo trading log entries, demo equity history, and every paper's `profitability_demo` back to 0. Live state is never touched.
 
 ---
 [← Back to README](../README.md)

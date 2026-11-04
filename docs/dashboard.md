@@ -29,7 +29,7 @@ All API calls happen on the dashboard server (route loaders/actions), which forw
 
 ## Live Cards
 
-Equity, Available Balance, Open Positions, Exposure, Total PnL, Unrealized PnL, Realized PnL.
+Equity, Available Balance, Open Positions, Exposure, Total PnL, Unrealized PnL, Realized PnL. Total and Realized PnL add up trades only, from the `closed_positions` records written as each position closes: a deleted paper's stay counted, and money added to or taken from the account doesn't change them (Equity and Available Balance do move with it).
 
 - Big **Auto trading** switch — whether the app may **open or add to** live positions on its own: entries and adds. **Exits go through whatever it says** — unwinds, take-profits, give-ups, strategy exits and [maintenance-margin closes](execution-engine.md#liquidation) — so an open position keeps selling and closing. **Off after every start** (kept in [Redis](redis.md), which keeps nothing on disk), so a restarted VPS opens nothing live until the owner turns it on. A live position already closed by hand on the exchange meanwhile: mark it **Doesn't exist** — else the app may send its exit. Demo papers ignore it.
 - Without a Hyperliquid API key or readable live balance, the cards show "no live data".

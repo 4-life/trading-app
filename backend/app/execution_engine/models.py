@@ -73,6 +73,52 @@ class Position(Base):
     exit_reason: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+class ClosedPosition(Base):
+    """A closed position's lasting record, written as it closes: not tied to
+    its paper (no foreign key), so it outlives the paper's deletion. The
+    dashboard's realized PnL and closed positions read these."""
+
+    __tablename__ = "closed_positions"
+    __table_args__ = (
+        CheckConstraint("mode IN ('demo', 'live')", name="ck_closed_positions_mode"),
+        Index("ix_closed_positions_mode_closed_at", "mode", "closed_at"),
+    )
+
+    position_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    paper_id: Mapped[int] = mapped_column()
+    mode: Mapped[str] = mapped_column(String)
+    asset: Mapped[str] = mapped_column(String)
+    direction: Mapped[str] = mapped_column(String)
+    size: Mapped[Decimal] = mapped_column(Numeric)
+    entry_price: Mapped[Decimal] = mapped_column(Numeric)
+    close_price: Mapped[Decimal] = mapped_column(Numeric)
+    margin_usd: Mapped[Decimal] = mapped_column(Numeric)  # all of it, at open
+    realized_pnl_usd: Mapped[Decimal] = mapped_column(Numeric)
+    exit_reason: Mapped[str] = mapped_column(String)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    @classmethod
+    def of(cls, position: Position, close_price: Decimal, pnl: Decimal) -> ClosedPosition:
+        """`position` just closed, at `close_price` with `pnl` realized in all."""
+        assert position.closed_at is not None and position.exit_reason is not None
+        return cls(
+            position_id=position.id,
+            paper_id=position.paper_id,
+            mode=position.mode,
+            asset=position.asset,
+            direction=position.direction,
+            size=position.size,
+            entry_price=position.entry_price,
+            close_price=close_price,
+            margin_usd=position.initial_margin_usd,
+            realized_pnl_usd=pnl,
+            exit_reason=position.exit_reason,
+            opened_at=position.opened_at,
+            closed_at=position.closed_at,
+        )
+
+
 class Order(Base):
     __tablename__ = "orders"
     __table_args__ = (

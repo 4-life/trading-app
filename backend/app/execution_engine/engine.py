@@ -26,7 +26,13 @@ from app.execution_engine.demo import (
     profitability_pct,
 )
 from app.execution_engine.live import LiveClient, LiveOrderError, live_client, round_size
-from app.execution_engine.models import DemoBalance, Order, Position, TradingDecision
+from app.execution_engine.models import (
+    ClosedPosition,
+    DemoBalance,
+    Order,
+    Position,
+    TradingDecision,
+)
 from app.executors.position_management import add_terms, stops_paper
 from app.market_data.models import FundingRate
 from app.notifications.alerts import alert
@@ -258,6 +264,7 @@ async def _close_demo(
     else:
         position.closed_at = now
         position.exit_reason = reason
+        session.add(ClosedPosition.of(position, position.close_price, position.realized_pnl_usd))
     await session.flush()
     await update_profitability(session, paper, position.mode)
     return order.id
@@ -314,6 +321,7 @@ async def _close_live(
     else:
         position.closed_at = now
         position.exit_reason = reason
+        session.add(ClosedPosition.of(position, position.close_price, position.realized_pnl_usd))
     await session.flush()
     await update_profitability(session, paper, "live")
     return order.id

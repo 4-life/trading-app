@@ -14,7 +14,13 @@ from sqlalchemy import func, select
 from app.db import async_session
 from app.execution_engine.demo import unrealized_pnl
 from app.execution_engine.live import LiveAccount, LiveClient, live_client
-from app.execution_engine.models import DemoBalance, Order, Position, TradingDecision
+from app.execution_engine.models import (
+    ClosedPosition,
+    DemoBalance,
+    Order,
+    Position,
+    TradingDecision,
+)
 from app.market_data.collector import PRICE_INTERVAL
 from app.market_data.models import Candle
 
@@ -136,15 +142,15 @@ async def portfolio(mode: Literal["demo", "live"] = Query(default="demo")) -> Po
         ).all()
         closed_rows = (
             await session.scalars(
-                select(Position)
-                .where(Position.mode == mode, Position.closed_at.is_not(None))
-                .order_by(Position.closed_at.desc())
+                select(ClosedPosition)
+                .where(ClosedPosition.mode == mode)
+                .order_by(ClosedPosition.closed_at.desc())
                 .limit(CLOSED_POSITIONS_LIMIT)
             )
         ).all()
         realized = await session.scalar(
-            select(func.coalesce(func.sum(Position.realized_pnl_usd), 0)).where(
-                Position.mode == mode, Position.closed_at.is_not(None)
+            select(func.coalesce(func.sum(ClosedPosition.realized_pnl_usd), 0)).where(
+                ClosedPosition.mode == mode
             )
         )
 
@@ -209,7 +215,7 @@ async def portfolio(mode: Literal["demo", "live"] = Query(default="demo")) -> Po
     )
     closed_out = [
         ClosedPositionOut(
-            id=p.id,
+            id=p.position_id,
             paper_id=p.paper_id,
             mode=p.mode,
             asset=p.asset,
@@ -218,14 +224,13 @@ async def portfolio(mode: Literal["demo", "live"] = Query(default="demo")) -> Po
             entry_price=p.entry_price,
             close_price=p.close_price,
             # Realized PnL covers every partial close - divide by the whole margin.
-            margin_usd=p.initial_margin_usd,
+            margin_usd=p.margin_usd,
             realized_pnl_usd=p.realized_pnl_usd,
             exit_reason=p.exit_reason,
             opened_at=p.opened_at,
             closed_at=p.closed_at,
         )
         for p in closed_rows
-        if p.closed_at is not None
     ]
     return PortfolioOut(
         mode=mode, live_data=True, stats=stats, open_positions=open_out, closed_positions=closed_out

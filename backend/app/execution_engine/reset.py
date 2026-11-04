@@ -7,6 +7,7 @@ from sqlalchemy import delete, func, select, update
 from app.db import async_session
 from app.execution_engine.models import (
     DEMO_STARTING_BALANCE_USD,
+    ClosedPosition,
     DemoBalance,
     EquitySnapshot,
     Order,
@@ -35,6 +36,7 @@ async def reset_demo_state() -> dict[str, int]:
         await session.execute(delete(TradingDecision).where(TradingDecision.mode == "demo"))
         await session.execute(delete(Order).where(Order.mode == "demo"))
         await session.execute(delete(Position).where(Position.mode == "demo"))
+        await session.execute(delete(ClosedPosition).where(ClosedPosition.mode == "demo"))
         await session.execute(delete(EquitySnapshot).where(EquitySnapshot.mode == "demo"))
         await session.execute(
             update(DemoBalance).values(

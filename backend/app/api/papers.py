@@ -719,7 +719,8 @@ async def enable_paper(paper_id: int) -> PaperOut:
 @router.delete("/papers/{paper_id}", status_code=204)
 async def delete_paper(paper_id: int) -> None:
     """Only a disabled paper. Deletes its whole history too (positions,
-    orders, decisions, equity snapshots, risk events)."""
+    orders, decisions, equity snapshots, risk events) - but not its
+    ClosedPosition records: the dashboard's PnL keeps counting them."""
     async with async_session() as session:
         paper = await _get(session, paper_id)
         if paper.enabled:
