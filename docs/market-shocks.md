@@ -24,6 +24,8 @@ From every coin's closed **1m** candles, BTC included — so an event shows with
 
 **Unusual move** — what's unusual depends on the coin, so any coin is also measured against itself: its 30-minute move is **6×** its normal one or more (the standard deviation of its 30-minute moves over the 7 days before) and **1%** at least, with its last 15 minutes of volume **3×** its usual. BTC's is a market event if 70% of the other coins moved 1% the same way (with fewer than 3 others: no breadth check); otherwise it shows on BTC's chart only. Another coin's is a coin event, held back while a market event of its kind is under 6 hours old, so a crash isn't one alert per coin. The hover box reads "ETH −3.1% in 30m · 8.6× its normal · volume 4.2×".
 
+**A move normal for the coin isn't a coin shock**, whatever its volume: a coin's move (the 4-hour one against BTC, or the unusual 30-minute one) must be at least **75%** of its usual day, the median high-to-low of its closes over the 7 days before (at least 3 known; fewer: not filtered). A coin swinging 13% a day needs about 9.5%. Market shocks aren't filtered. On BTC, ETH, BNB and HYPE, 20 of 29 of the moves the 30-minute rule alone flagged over two months cleared 75%, ETH's −2.86% of Oct 7 at 165% of its usual day (15m candles, volume check left out).
+
 The thresholds are constants at the top of the module — tuned once the dots have been checked against the news.
 
 ---

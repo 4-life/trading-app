@@ -159,6 +159,27 @@ def test_btcs_unusual_move_alone_is_on_its_chart_only() -> None:
     assert market_shocks(series, "ETH", STEP, T0) == []
 
 
+def _wild_market(jump: float) -> dict[str, Series]:
+    """HYPE swings 20% up and back every day, on its usual volume; a jump on
+    volume at candle 400, its fifth day."""
+    wild = {
+        T0 + k * STEP: (100.0 * (1 + 0.2 * (1 - abs(2 * (k % 96) / 96 - 1))), 10.0)
+        for k in range(N)
+    }
+    _move(wild, 400, jump, 40.0)
+    return {"BTC": _flat(), "HYPE": wild, "ETH": _flat(), "SOL": _flat()}
+
+
+def test_a_move_normal_for_the_coins_day_isnt_a_shock() -> None:
+    # 6% on the volume: a shock for a flat coin (above), not for one that swings 20% a day.
+    assert market_shocks(_wild_market(0.06), "HYPE", STEP, T0) == []
+
+
+def test_a_move_beyond_the_coins_usual_day_is_a_shock() -> None:
+    shocks = market_shocks(_wild_market(0.25), "HYPE", STEP, T0)
+    assert [(s.kind, s.scope) for s in shocks] == [("bullrun", "coin")]
+
+
 def test_a_panic_blocks_longs_and_a_bullrun_shorts_for_six_hours() -> None:
     panic = Shock(T0, T0 + STEP, "panic", "market", "")
     bullrun = Shock(T0 + STEP, T0 + 2 * STEP, "bullrun", "coin", "")

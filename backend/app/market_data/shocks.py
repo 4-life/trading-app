@@ -18,13 +18,18 @@ back the entries against one (app/market_data/shock_state.py).
   other coins move UNUSUAL_BREADTH_MOVE the same way (skipped with fewer than
   MIN_COINS), otherwise on BTC's chart only. A coin's waits while a market
   event of its kind is under COOLDOWN old: a crash isn't an event per coin.
+- A move normal for the coin isn't a coin event, whatever its volume: a coin
+  panic / bullrun's move (the 4h one against BTC, or the unusual one) must be
+  DAILY_RANGE_SHARE of the coin's usual day at least - the median high-to-low of
+  its closes over the DAILY_RANGE_DAYS before (with DAILY_RANGE_MIN_DAYS known).
+  Market events aren't filtered.
 
 "Usual" volume: the median volume of the VOLUME_WINDOWS windows before. One
 event of a kind per COOLDOWN - its first candle."""
 
 from bisect import bisect_left
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from functools import cached_property
 from itertools import accumulate
 from math import sqrt
@@ -49,6 +54,9 @@ UNUSUAL_BASELINE = timedelta(days=7)
 UNUSUAL_BREADTH_MOVE = 0.01
 BURST_SPAN = timedelta(minutes=15)
 BURST_VOLUME_SPIKE = 3.0
+DAILY_RANGE_SHARE = 0.75
+DAILY_RANGE_DAYS = 7
+DAILY_RANGE_MIN_DAYS = 3
 
 HOUR = timedelta(hours=1)
 FOUR_HOURS = timedelta(hours=4)
@@ -92,7 +100,8 @@ def _candles(span: timedelta, step: timedelta) -> int:
 def lookback(step: timedelta) -> int:
     """Candles needed before the first one checked."""
     volume = (VOLUME_WINDOWS + 2) * _candles(FOUR_HOURS, step)
-    return max(volume, _candles(UNUSUAL_BASELINE, step) + 2 * _candles(UNUSUAL_SPAN, step))
+    unusual = _candles(UNUSUAL_BASELINE, step) + 2 * _candles(UNUSUAL_SPAN, step)
+    return max(volume, unusual, _candles(timedelta(days=DAILY_RANGE_DAYS + 1), step))
 
 
 class _Track:
@@ -159,6 +168,28 @@ class _Track:
         mean = (total[end] - total[begin]) / known
         variance = (squares[end] - squares[begin]) / known - mean * mean
         return None if variance <= 0 else (move, abs(move) / sqrt(variance))
+
+    @cached_property
+    def _day_ranges(self) -> dict[date, float]:
+        """Each day's high-to-low of the closes, a share of its low."""
+        days: dict[date, list[float]] = {}
+        for t, close in zip(self.times, self.closes, strict=True):
+            if close > 0:
+                days.setdefault(t.date(), []).append(close)
+        return {day: max(closes) / min(closes) - 1 for day, closes in days.items()}
+
+    def usual_day(self, t: datetime) -> float | None:
+        """The median of the DAILY_RANGE_DAYS' ranges before `t`'s day; None:
+        fewer than DAILY_RANGE_MIN_DAYS known."""
+        ranges = self._day_ranges
+        days = (t.date() - timedelta(days=k) for k in range(1, DAILY_RANGE_DAYS + 1))
+        known = [ranges[day] for day in days if day in ranges]
+        return median(known) if len(known) >= DAILY_RANGE_MIN_DAYS else None
+
+    def beats_usual_day(self, t: datetime, move: float) -> bool:
+        """`move` isn't normal for the coin (unknown: it counts)."""
+        usual = self.usual_day(t)
+        return usual is None or abs(move) >= DAILY_RANGE_SHARE * usual
 
     def since(self, start: datetime) -> list[datetime]:
         return self.times[bisect_left(self.times, start) :]
@@ -238,7 +269,7 @@ def market_shocks(
                 way = "up" if sign > 0 else "down"
                 breadth = f"{same} of {len(moves)} coins {way}" if broad else "no breadth"
                 emit(t, kind, "market", f"{text} · {breadth}")
-            elif asset == REGIME_ASSET:
+            elif asset == REGIME_ASSET and btc.beats_usual_day(t, btc_unusual[0]):
                 emit(t, kind, "coin", text)
         if coin is None:
             continue
@@ -246,7 +277,9 @@ def market_shocks(
         if coin_unusual is not None:
             kind = "bullrun" if coin_unusual[0] > 0 else "panic"
             market_at = last.get((kind, "market"))
-            if market_at is None or t - market_at >= COOLDOWN:
+            if (market_at is None or t - market_at >= COOLDOWN) and coin.beats_usual_day(
+                t, coin_unusual[0]
+            ):
                 emit(t, kind, "coin", unusual_text(asset, coin_unusual))
         own, base = coin.change(t, four), btc.change(t, four)
         own_hour, base_hour = coin.change(t, hour), btc.change(t, hour)
@@ -258,7 +291,12 @@ def market_shocks(
         relative = own - base
         sign = 1 if relative > 0 else -1
         fast = sign * (own_hour - base_hour) >= COIN_SPEED
-        if abs(relative) >= RELATIVE and fast and own_spike >= COIN_VOLUME_SPIKE:
+        if (
+            abs(relative) >= RELATIVE
+            and fast
+            and own_spike >= COIN_VOLUME_SPIKE
+            and coin.beats_usual_day(t, relative)
+        ):
             fast_move = _pct(own_hour - base_hour)
             text = (
                 f"{asset} {_pct(own)} vs BTC {_pct(base)} in 4h ({fast_move} in 1h)"
