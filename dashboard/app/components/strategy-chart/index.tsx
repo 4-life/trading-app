@@ -206,7 +206,7 @@ export function StrategyChartCard({
   if (chartPapers.length === 0) return null;
   const selected = chartPapers.find((p) => p.id === chart?.paper_id) ?? null;
   const averaging = selected !== null && AVERAGING_KINDS.includes(selected.kind);
-  const backtesting = averaging && saving.has(selected.id);
+  const backtesting = averaging && selected.mode !== "live" && saving.has(selected.id);
   const preparing = selected !== null && (isPreparing(selected) || backtesting);
 
   return (

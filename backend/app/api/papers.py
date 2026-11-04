@@ -337,7 +337,7 @@ async def update_paper(paper_id: int, payload: PaperUpdate) -> PaperOut:
     (the position was opened at the old one); live, it must be whole. An
     averaging paper's backtest is re-run on the new settings, a single
     paper's when its stop-loss / take-profit changed (its trading doesn't
-    pause)."""
+    pause) - not a live paper's: the save doesn't wait for a backtest."""
     async with async_session() as session:
         paper = await _get(session, paper_id)
         _check_management(paper.kind, payload)
@@ -352,9 +352,11 @@ async def update_paper(paper_id: int, payload: PaperUpdate) -> PaperOut:
             setattr(paper, name, value)
         paper.updated_at = datetime.now(UTC)
         await session.commit()
-    if paper.kind == "averaging" and paper.prep_status is None:
+    if paper.mode == "live" or paper.prep_status is not None:
+        return PaperOut.model_validate(paper)
+    if paper.kind == "averaging":
         await backtest_averaging(paper, None)
-    elif exits != (paper.stop_loss_pct, paper.price_take_profit_pct) and paper.prep_status is None:
+    elif exits != (paper.stop_loss_pct, paper.price_take_profit_pct):
         backtest = backtest_of(paper)
         if backtest is not None:
             await backtest(paper, None)

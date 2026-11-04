@@ -76,7 +76,7 @@ export function EditPaperDialog({ paper }: { paper: Paper }) {
               ) : (
                 <>
                   <Loader2 className="size-4 animate-spin" />
-                  {AVERAGING_KINDS.includes(paper.kind)
+                  {AVERAGING_KINDS.includes(paper.kind) && paper.mode !== 'live'
                     ? 'Saving, backtesting…'
                     : 'Saving…'}
                 </>

@@ -72,3 +72,64 @@ def test_the_api_rejects_a_leverage_over_the_assets_max(monkeypatch: pytest.Monk
     assert err.value.status_code == 422 and "x50" in str(err.value.detail)
     with pytest.raises(HTTPException):
         check("SPY", Decimal(10), Decimal(60))
+
+
+@pytest.mark.parametrize(("mode", "backtests"), [("demo", 1), ("live", 0)])
+def test_only_a_demo_papers_edit_reruns_its_backtest(
+    monkeypatch: pytest.MonkeyPatch, mode: str, backtests: int
+) -> None:
+    now = datetime.now(UTC)
+    paper = Paper(
+        id=1,
+        asset="BTC",
+        timeframe="15m",
+        leverage=Decimal(10),
+        direction="long",
+        mode=mode,
+        executor="keltner",
+        kind="averaging",
+        profitability_demo=Decimal(0),
+        profitability_live=Decimal(0),
+        enabled=True,
+        enabled_at=now,
+        intraday=False,
+        compound_margin=False,
+        reopen_in_trend=False,
+        atr_stop=False,
+        created_at=now,
+        updated_at=now,
+    )
+    ran: list[Paper] = []
+
+    class Session:
+        async def __aenter__(self) -> Session:
+            return self
+
+        async def __aexit__(self, *_: Any) -> None:
+            return None
+
+        async def commit(self) -> None:
+            return None
+
+    async def get(*_: Any) -> Paper:
+        return paper
+
+    async def no_limits(*_: Any) -> None:
+        return None
+
+    async def backtest(p: Paper, _: Any) -> None:
+        ran.append(p)
+
+    monkeypatch.setattr(papers_api, "async_session", Session)
+    monkeypatch.setattr(papers_api, "_get", get)
+    monkeypatch.setattr(papers_api, "_check_leverage", no_limits)
+    monkeypatch.setattr(papers_api, "backtest_averaging", backtest)
+    payload = papers_api.PaperUpdate(
+        leverage=Decimal(10),
+        initial_size_usd=Decimal(10),
+        add_leverage=Decimal(3),
+        take_profit_pct=Decimal("0.3"),
+    )
+    asyncio.run(papers_api.update_paper(1, payload))
+    assert len(ran) == backtests
+    assert paper.take_profit_pct == Decimal("0.3")  # saved either way

@@ -78,7 +78,7 @@ A **single** paper can set its own **stop-loss** (`stop_loss_pct`) and **take-pr
 
 ## Editing
 
-`PATCH /papers/{id}` (the dashboard's **Edit**) replaces the paper's `leverage` and, for an averaging paper, its position management. Position management takes effect at once, on an open position too. The leverage changes only without an open position or an order in flight (the open position was opened at the old one), and live it must be a whole number. Everything else (asset, timeframe, executor, direction, mode) is fixed at creation. An averaging paper's backtest re-runs within the save (its trading doesn't pause); meanwhile the Save button reads "Saving, backtesting…" and its chart shows "Running the backtest…".
+`PATCH /papers/{id}` (the dashboard's **Edit**) replaces the paper's `leverage` and, for an averaging paper, its position management. Position management takes effect at once, on an open position too. The leverage changes only without an open position or an order in flight (the open position was opened at the old one), and live it must be a whole number. Everything else (asset, timeframe, executor, direction, mode) is fixed at creation. An averaging paper's backtest re-runs within the save (its trading doesn't pause); meanwhile the Save button reads "Saving, backtesting…" and its chart shows "Running the backtest…". A **live** paper's doesn't: the save returns at once and its chart keeps the backtest it has, on the settings before the edit.
 
 ## Kinds
 
