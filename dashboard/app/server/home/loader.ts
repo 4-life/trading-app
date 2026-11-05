@@ -42,7 +42,8 @@ export async function loader({ request }: { request: Request }) {
       : load<PaperChart>(request, `/papers/${String(id)}/chart?limit=6000`, 20_000);
   });
   return {
-    live: load<Portfolio>(request, "/portfolio?mode=live"),
+    // Asks the exchange: the first call after a quiet while can take its time.
+    live: load<Portfolio>(request, "/portfolio?mode=live", 20_000),
     demo: load<Portfolio>(request, "/portfolio?mode=demo"),
     papers,
     decisions: load<DecisionPage>(request, `/decisions?${log.toString()}`),
