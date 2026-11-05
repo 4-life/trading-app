@@ -655,8 +655,10 @@ function withoutHidden(chart: PaperChart, hidden: Set<Indicator>): PaperChart {
 export default function StrategyChart({ chart }: { chart: PaperChart }) {
   const container = useRef<HTMLDivElement>(null);
   const older = useRef<Older | null>(null);
-  // The visible time range, kept across data refreshes of the same paper.
-  const view = useRef<{ paperId: number; from: Time; to: Time } | null>(null);
+  // The view, kept across data refreshes of the same paper: in bars from a
+  // candle, which a time range can't do past the last candle (the space
+  // scrolled to on its right) and a plain index can't once candles are added.
+  const view = useRef<{ paperId: number; anchor: Time; from: number; to: number } | null>(null);
   // The top-left box: the crosshair's candle, the last candle otherwise.
   const [info, setInfo] = useState<InfoRow[]>([]);
   const [trades, setTrades] = useState<InfoRow[]>([]);
@@ -749,8 +751,14 @@ export default function StrategyChart({ chart }: { chart: PaperChart }) {
     });
     const shown = view.current;
     const last = chart.candles.at(-1);
-    if (shown && shown.paperId === chart.paper_id) {
-      timeScale.setVisibleRange({ from: shown.from, to: shown.to });
+    const anchor = shown?.paperId === chart.paper_id ? timeScale.timeToIndex(shown.anchor, true) : null;
+    if (shown && anchor !== null) {
+      // The last candle was in view and a new one would land past the edge:
+      // follow it. Scrolled back in history, or with room on the right: stay.
+      const newest = last ? timeScale.timeToIndex(sec(last.time) as UTCTimestamp, true) : null;
+      const to = anchor + shown.to;
+      const follow = newest !== null && shown.to > -1 && newest > to ? newest - anchor : 0;
+      timeScale.setVisibleLogicalRange({ from: anchor + shown.from + follow, to: to + follow });
     } else if (last) {
       const to = sec(last.time);
       timeScale.setVisibleRange({
@@ -761,8 +769,14 @@ export default function StrategyChart({ chart }: { chart: PaperChart }) {
     void loadOlder();
     return () => {
       disposed = true;
-      const range = timeScale.getVisibleRange();
-      view.current = range ? { paperId: chart.paper_id, ...range } : null;
+      const range = timeScale.getVisibleLogicalRange();
+      const newest = data.candles.at(-1);
+      const time = newest ? (sec(newest.time) as UTCTimestamp) : null;
+      const index = time === null ? null : timeScale.timeToIndex(time, true);
+      view.current =
+        range && time !== null && index !== null
+          ? { paperId: chart.paper_id, anchor: time, from: range.from - index, to: range.to - index }
+          : null;
       api.remove();
     };
   }, [chart, hidden]);
