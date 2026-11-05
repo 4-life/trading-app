@@ -295,13 +295,13 @@ def _swings(series: list[ChartCandle], keep: range) -> list[SwingOut]:
 
 def _supertrend(direction: str, series: list[ChartCandle], keep: range) -> list[SupertrendPointOut]:
     """Every paper's Supertrend - the one a Supertrend paper trades (on the
-    lower trendline for a long paper, the upper for the others) - computed
+    upper trendline for a short paper, the lower for the others) - computed
     over `series` (closed candles), on the candles in `keep`."""
     st = supertrend_signals(
         [float(c.high) for c in series],
         [float(c.low) for c in series],
         [float(c.close) for c in series],
-        "long" if direction == "long" else "short",
+        "short" if direction == "short" else "long",
     )
     return [
         SupertrendPointOut(

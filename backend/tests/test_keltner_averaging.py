@@ -1,11 +1,13 @@
 """Pure unit tests, no database."""
 
 from datetime import UTC, datetime, timedelta
+from math import sin
 
 from app.backtest.averaging import Rules, simulate
 from app.backtest.bars import Bar, SimTrade, exit_at
-from app.executors.keltner_averaging import KeltnerGuard
+from app.executors.keltner_averaging import KeltnerGuard, keltner_guard
 from app.executors.position_management import TAKE_PROFIT_EXIT
+from app.executors.supertrend import signals as supertrend_signals
 from app.market_data.shocks import Shock
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
@@ -28,6 +30,17 @@ def _guard(
         [False] * n,
         [i in sell for i in range(n)],
     )
+
+
+def test_a_both_paper_reads_the_long_line_a_short_paper_the_short_one() -> None:
+    closes = [100 + 10 * sin(k / 9) + (k % 5) for k in range(400)]
+    highs, lows = [c + 1 for c in closes], [c - 1 for c in closes]
+    long_line = supertrend_signals(highs, lows, closes, "long")
+    short_line = supertrend_signals(highs, lows, closes, "short")
+    assert long_line.line != short_line.line
+    for direction, st in (("long", long_line), ("both", long_line), ("short", short_line)):
+        g = keltner_guard(direction, highs, lows, closes)
+        assert (g.trend, g.line) == (st.trend, st.line)
 
 
 def _bars(closes: list[float]) -> list[Bar]:

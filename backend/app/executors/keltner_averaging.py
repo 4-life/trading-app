@@ -4,8 +4,8 @@ docs/keltner-strategy-engine.md#averaging. Pure, indexed by candle; live
 backtest (app/backtest/averaging.py) use the same.
 
 - Entry: a Keltner Buy with the Supertrend red opens a long, a Sell with it
-  green a short (the paper's Supertrend, as charted: the lower trendline's
-  for a long paper, the upper's for the others). Signal adds take any.
+  green a short (the paper's Supertrend, as charted: the upper trendline's
+  for a short paper, the lower's for the others). Signal adds take any.
 - Broken sell: the position's first exit signal since its entry is ignored
   while the Supertrend's line is still where it was at the entry.
 - Core: the first entry and the strength adds are never unwound
@@ -68,6 +68,6 @@ class KeltnerGuard:
 def keltner_guard(
     paper_direction: str, highs: list[float], lows: list[float], closes: list[float]
 ) -> KeltnerGuard:
-    st = supertrend_signals(highs, lows, closes, "long" if paper_direction == "long" else "short")
+    st = supertrend_signals(highs, lows, closes, "short" if paper_direction == "short" else "long")
     ks = keltner_signals(highs, lows, closes)
     return KeltnerGuard(closes, st.trend, st.line, ks.buy, ks.sell)

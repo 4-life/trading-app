@@ -26,7 +26,7 @@ The indicator's ATR channel and WaveTrend only draw — they make no signals and
 
 An [averaging](papers.md#averaging-papers) Keltner paper adds its own rules to the averaging ones (`backend/app/executors/keltner_averaging.py` — live, demo, backtest and sweep alike). Below for a long; a short is mirrored (green / red swapped, HH for LL, Buy for Sell).
 
-- **Regime** — the paper's [Supertrend](supertrend-strategy-engine.md#chart), as its chart draws it (the lower trendline's for a long paper, the upper's for a short or both one): green bullish, red bearish.
+- **Regime** — the paper's [Supertrend](supertrend-strategy-engine.md#chart), as its chart draws it (the upper trendline's for a short paper, the lower's for a long or both one, its shorts too): green bullish, red bearish.
 - **Entry** — flat, a **Buy** opens a long only while the Supertrend is **red** (a Sell a short only while it's green). The dip adds, give-up and intraday mode are the averaging paper's own.
 - **Signal adds** — a Buy while the long is open adds a unit, whatever the Supertrend, only **at least 1% below the last buy** (`SIGNAL_ADD_SPACING`), and **at most 5** per position (`MAX_SIGNAL_ADDS`).
 - **Strength add** (`strength_add`) — the candle the Supertrend **flips green** with the long **in profit** at its close adds a unit at that close, sized like the first entry.
