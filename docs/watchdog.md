@@ -16,7 +16,7 @@ Monitors all other services and is the mechanism behind the system's resilience 
 | `exchange_connectivity` | critical | a live Hyperliquid REST call |
 | `clock_drift` | critical | drift vs. Hyperliquid's server time > `CLOCK_DRIFT_MAX_SECONDS` (no NTP/UDP dependency) |
 | `order_rate` | critical | more than `MAX_ORDERS_PER_MINUTE` (20) orders queued in the last minute — a runaway executor |
-| `live_reconciliation` | critical | open live positions in the database match the Hyperliquid account (skipped without live keys) |
+| `live_reconciliation` | critical | open live positions in the database match the Hyperliquid account (skipped without live keys). An asset fails only if it mismatches on two passes in a row, because an order fills on the exchange just before the app records it; the first pass after startup has no grace |
 | `position_protection` | critical | every open position belongs to an enabled paper whose executor ran within `EXECUTOR_HEARTBEAT_STALE_SECONDS` (180) — otherwise nothing evaluates its SL/TP |
 | `api` | warning | the app's REST API answers `/health` (`API_URL`) |
 | `redis` | warning | connectivity |

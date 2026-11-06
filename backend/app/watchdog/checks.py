@@ -159,9 +159,18 @@ async def check_position_protection() -> CheckResult:
     return CheckResult("position_protection", True, f"{len(rows)} open position(s) managed")
 
 
+# Assets that didn't match on the previous pass. None until the first comparison.
+_unconfirmed_mismatches: set[str] | None = None
+
+
 async def check_live_reconciliation() -> CheckResult:
     """Open live positions in the database match the Hyperliquid account
-    (asset, direction, size). Skipped (ok) when the live keys aren't set."""
+    (asset, direction, size). Skipped (ok) when the live keys aren't set.
+
+    An order fills on the exchange before its transaction commits, so a pass can
+    land in that gap: an asset fails only if it also didn't match on the previous
+    pass. The first pass has no grace, so the startup gate never clears on a mismatch."""
+    global _unconfirmed_mismatches
     client = await live_client()
     if client is None:
         return CheckResult("live_reconciliation", True, "live keys not set - nothing to compare")
@@ -178,11 +187,19 @@ async def check_live_reconciliation() -> CheckResult:
             )
         ).all()
     local = {asset: size if direction == "long" else -size for asset, direction, size in rows}
-    mismatches = [
-        f"{asset}: app {local.get(asset, 0)} vs exchange {exchange.get(asset, 0)}"
+    mismatches = {
+        asset: f"{asset}: app {local.get(asset, 0)} vs exchange {exchange.get(asset, 0)}"
         for asset in sorted(set(local) | set(exchange))
         if local.get(asset, 0) != exchange.get(asset, 0)
+    }
+    previous = _unconfirmed_mismatches
+    _unconfirmed_mismatches = set(mismatches)
+    confirmed = [
+        text for asset, text in mismatches.items() if previous is None or asset in previous
     ]
+    if confirmed:
+        return CheckResult("live_reconciliation", False, "; ".join(confirmed))
     if mismatches:
-        return CheckResult("live_reconciliation", False, "; ".join(mismatches))
+        details = "; ".join(mismatches.values())
+        return CheckResult("live_reconciliation", True, f"rechecking next pass - {details}")
     return CheckResult("live_reconciliation", True, f"{len(local)} live position(s) match")
