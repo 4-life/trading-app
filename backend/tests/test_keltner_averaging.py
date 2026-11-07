@@ -5,7 +5,7 @@ from math import sin
 
 from app.backtest.averaging import Rules, simulate
 from app.backtest.bars import Bar, SimTrade, exit_at
-from app.executors.keltner_averaging import KeltnerGuard, keltner_guard
+from app.executors.keltner_averaging import KeltnerGuard, average_cycle_move, keltner_guard
 from app.executors.position_management import TAKE_PROFIT_EXIT
 from app.executors.supertrend import signals as supertrend_signals
 from app.market_data.shocks import Shock
@@ -41,6 +41,54 @@ def test_a_both_paper_reads_the_long_line_a_short_paper_the_short_one() -> None:
     for direction, st in (("long", long_line), ("both", long_line), ("short", short_line)):
         g = keltner_guard(direction, highs, lows, closes)
         assert (g.trend, g.line) == (st.trend, st.line)
+
+
+def _cycles(
+    closes: list[float], trend: list[int | None], buy: set[int], sell: set[int]
+) -> KeltnerGuard:
+    n = len(closes)
+    flat: list[float | None] = [90.0] * n
+    return KeltnerGuard(
+        closes, trend, flat, [i in buy for i in range(n)], [i in sell for i in range(n)]
+    )
+
+
+def _hours(n: int) -> list[datetime]:
+    return [T0 + timedelta(hours=k) for k in range(n)]
+
+
+def test_the_average_counts_winners_and_losers_alike() -> None:
+    # 100 -> 110 (+10%), then 100 -> 90 (-10%) and 100 -> 106 (+6%): +2%.
+    g = _cycles(
+        [100.0, 110.0, 100.0, 90.0, 100.0, 106.0],
+        [-1, 1, -1, 1, -1, 1],
+        {0, 2, 4},
+        {1, 3, 5},
+    )
+    move, cycles = average_cycle_move(g, _hours(6), T0)
+    assert cycles == 3
+    assert move is not None and abs(move - 0.02) < 1e-9
+
+
+def test_a_cycle_takes_only_a_good_entry_and_a_good_sell() -> None:
+    # A Buy on green (1) opens nothing; a Sell on red (3) closes nothing.
+    closes = [100.0, 200.0, 100.0, 50.0, 120.0]
+    g = _cycles(closes, [1, 1, -1, -1, 1], {0, 2}, {3, 4})
+    move, cycles = average_cycle_move(g, _hours(5), T0)
+    assert cycles == 1 and move is not None and abs(move - 0.2) < 1e-9
+
+
+def test_a_cycle_starts_from_the_window_and_an_open_one_is_left_out() -> None:
+    closes = [100.0, 100.0, 100.0, 110.0]
+    g = _cycles(closes, [-1, 1, -1, 1], {0, 2}, {1, 3})
+    # The first cycle is before the window; the second counts.
+    move, cycles = average_cycle_move(g, _hours(4), T0 + timedelta(hours=2))
+    assert cycles == 1 and move is not None and abs(move - 0.1) < 1e-9
+    # Entered, never sold.
+    assert average_cycle_move(_cycles([100.0, 110.0], [-1, -1], {0}, set()), _hours(2), T0) == (
+        None,
+        0,
+    )
 
 
 def _bars(closes: list[float]) -> list[Bar]:

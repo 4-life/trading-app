@@ -175,6 +175,10 @@ class PaperOut(PositionManagement, PaperExits):
     # found at (null: a set date or the whole history).
     backtest_from: datetime | None = None
     backtest_from_price: Decimal | None = None
+    # A Keltner averaging paper's dynamic take-profit (docs/papers.md#dynamic-take-profit).
+    dynamic_tp_move: Decimal | None = None
+    dynamic_tp_cycles: int | None = None
+    dynamic_tp_at: datetime | None = None
     enabled: bool
     enabled_at: datetime
     disabled_by: str | None

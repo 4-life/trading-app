@@ -22,6 +22,11 @@ export interface Paper {
   profitability_live: string;
   backtest_return_pct: string | null; // net % of price after fees; null = no backtest
   backtest_net_usd: string | null; // an averaging paper's net PnL after fees; null otherwise
+  // A Keltner averaging paper's average move, good entry to good sell, over the
+  // last 30 days: a share of the price (null: no cycle); for looking at only.
+  dynamic_tp_move: string | null;
+  dynamic_tp_cycles: number | null;
+  dynamic_tp_at: string | null; // when measured; null: not yet
   backtest_from: string | null; // where its stored backtest started
   backtest_from_price: string | null; // the current price that date was found at; null: not by price
   enabled: boolean;

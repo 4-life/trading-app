@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
@@ -121,6 +122,12 @@ class Paper(Base):
     # The take-profit floor: a strategy sell closes once the PnL is this share
     # of all the margin put in.
     take_profit_pct: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    # A Keltner averaging paper's dynamic take-profit, for looking at only
+    # (app/papers/dynamic_tp.py): the average move of its cycles, a share of the
+    # price (NULL: no cycle), how many, and when it was measured.
+    dynamic_tp_move: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    dynamic_tp_cycles: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    dynamic_tp_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Where the averaging backtest starts trading; NULL = where the current price
     # first appears in the history (app/backtest/bars.py find_backtest_from).
     backtest_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

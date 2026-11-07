@@ -16,6 +16,7 @@ import {
 import { FIELD_CLASS } from '@/lib/styles';
 import { AVERAGING_KINDS } from '@/constants/papers';
 import type { ActionResult } from '@/types/action';
+import { formatDateTime } from '@/lib/format';
 import type { Paper } from '@/types/paper';
 
 import { PaperExitsFields } from '../paper-exits-fields';
@@ -24,6 +25,24 @@ import { PositionManagementFields } from '../position-management-fields';
 // Edits the leverage (only without an open position) and, for an averaging
 // paper, its position management (at once, an open position included) -
 // docs/papers.md#editing.
+// For looking at only: nothing trades on it (docs/papers.md#dynamic-take-profit).
+function DynamicTakeProfit({ paper }: { paper: Paper }) {
+  const { dynamic_tp_at: at, dynamic_tp_move: move, dynamic_tp_cycles: cycles } = paper;
+  const percent = (share: number) => `${share > 0 ? '+' : ''}${share.toFixed(2)}%`;
+  return (
+    <p className="text-xs text-muted-foreground">
+      Dynamic TP:{' '}
+      {at === null
+        ? 'not measured yet'
+        : move === null
+          ? `no full cycle in the last 30 days · measured ${formatDateTime(at)}`
+          : `${percent(Number(move) * Number(paper.leverage) * 100)} of margin ` +
+            `(average move ${percent(Number(move) * 100)} at ×${String(Number(paper.leverage))}, ` +
+            `${String(cycles ?? 0)} cycles in the last 30 days) · measured ${formatDateTime(at)}`}
+    </p>
+  );
+}
+
 export function EditPaperDialog({ paper }: { paper: Paper }) {
   const fetcher = useFetcher<ActionResult>();
   const [open, setOpen] = useState(false);
@@ -64,6 +83,9 @@ export function EditPaperDialog({ paper }: { paper: Paper }) {
             <PositionManagementFields paper={paper} />
           )}
           {paper.kind === 'single' && <PaperExitsFields paper={paper} />}
+          {paper.kind === 'averaging' && paper.executor === 'keltner' && (
+            <DynamicTakeProfit paper={paper} />
+          )}
           {fetcher.data?.error && (
             <p className="text-sm text-destructive">{fetcher.data.error}</p>
           )}
