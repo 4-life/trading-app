@@ -1,3 +1,4 @@
+import { SlidersHorizontalIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -17,6 +18,7 @@ export function SweepDialog({ paper }: { paper: Paper }) {
   return (
     <Dialog>
       <DialogTrigger render={<Button size="xs" variant="outline" />}>
+        <SlidersHorizontalIcon />
         Sweep
       </DialogTrigger>
       <DialogContent className="sm:max-w-3xl">

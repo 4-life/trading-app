@@ -1,4 +1,4 @@
-import { Loader2 } from 'lucide-react';
+import { Loader2, PencilIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useFetcher } from 'react-router';
 
@@ -36,6 +36,7 @@ export function EditPaperDialog({ paper }: { paper: Paper }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger render={<Button size="xs" variant="outline" />}>
+        <PencilIcon />
         Edit
       </DialogTrigger>
       <DialogContent>
