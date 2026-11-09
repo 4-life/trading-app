@@ -69,7 +69,7 @@ class KeltnerGuard:
 def average_cycle_move(
     guard: KeltnerGuard, times: list[datetime], since: datetime
 ) -> tuple[float | None, int]:
-    """The average move (a share of the price, winners and losers alike) from a
+    """The average distance (a share of the price, up or down alike) from a
     good entry - from `since`, a Buy on a red Supertrend - to the next good sell,
     a Sell on a green one; then the next cycle. And how many cycles: a cycle
     still open is left out, without any the average is None."""
@@ -82,7 +82,7 @@ def average_cycle_move(
             if guard.buy[i] and guard.trend[i] == -1:
                 entry = i
         elif guard.sell[i] and guard.trend[i] == 1:
-            moves.append(guard.closes[i] / guard.closes[entry] - 1)
+            moves.append(abs(guard.closes[i] / guard.closes[entry] - 1))
             entry = None
     return (sum(moves) / len(moves) if moves else None), len(moves)
 

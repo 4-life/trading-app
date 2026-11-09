@@ -2,6 +2,7 @@
 management), switch to live, disable, re-enable, delete; an averaging
 paper's settings sweep."""
 
+import logging
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Literal
@@ -26,6 +27,8 @@ from app.execution_engine.models import (
 )
 from app.market_data.assets import configured_assets
 from app.market_data.limits import all_market_limits, market_limits
+from app.papers.dynamic_tp import has_dynamic_tp
+from app.papers.dynamic_tp import refresh as refresh_dynamic_tp
 from app.papers.models import (
     MARKET,
     POSITION_MANAGEMENT,
@@ -53,6 +56,7 @@ from app.risk_engine.blocks import block_reason, unblock_paper
 from app.system.models import RiskEvent
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # both only where the executor trades both (_EXECUTOR_DIRECTIONS).
 AVERAGING_DIRECTIONS = ("long", "short", "both")
@@ -357,10 +361,17 @@ async def update_paper(paper_id: int, payload: PaperUpdate) -> PaperOut:
             if paper.mode == "live" and payload.leverage != int(payload.leverage):
                 raise HTTPException(status_code=409, detail="live leverage must be a whole number")
         exits = (paper.stop_loss_pct, paper.price_take_profit_pct)
+        leverage_changed = payload.leverage != paper.leverage
         for name, value in payload.model_dump().items():
             setattr(paper, name, value)
         paper.updated_at = datetime.now(UTC)
         await session.commit()
+    if leverage_changed and has_dynamic_tp(paper) and paper.prep_status is None:
+        try:
+            await refresh_dynamic_tp(paper)
+        except Exception:
+            # The edit is saved: the daily measure catches up.
+            logger.exception("paper %d: measuring the dynamic take-profit failed", paper.id)
     if paper.mode == "live" or paper.prep_status is not None:
         return PaperOut.model_validate(paper)
     if paper.kind == "averaging":

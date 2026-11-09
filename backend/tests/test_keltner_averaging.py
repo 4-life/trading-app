@@ -57,8 +57,8 @@ def _hours(n: int) -> list[datetime]:
     return [T0 + timedelta(hours=k) for k in range(n)]
 
 
-def test_the_average_counts_winners_and_losers_alike() -> None:
-    # 100 -> 110 (+10%), then 100 -> 90 (-10%) and 100 -> 106 (+6%): +2%.
+def test_the_average_distance_ignores_the_direction() -> None:
+    # 100 -> 110 (10%), then 100 -> 90 (10%) and 100 -> 106 (6%): 26% / 3.
     g = _cycles(
         [100.0, 110.0, 100.0, 90.0, 100.0, 106.0],
         [-1, 1, -1, 1, -1, 1],
@@ -67,7 +67,7 @@ def test_the_average_counts_winners_and_losers_alike() -> None:
     )
     move, cycles = average_cycle_move(g, _hours(6), T0)
     assert cycles == 3
-    assert move is not None and abs(move - 0.02) < 1e-9
+    assert move is not None and abs(move - 0.26 / 3) < 1e-9
 
 
 def test_a_cycle_takes_only_a_good_entry_and_a_good_sell() -> None:

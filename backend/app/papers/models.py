@@ -123,7 +123,7 @@ class Paper(Base):
     # of all the margin put in.
     take_profit_pct: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
     # A Keltner averaging paper's dynamic take-profit, for looking at only
-    # (app/papers/dynamic_tp.py): the average move of its cycles, a share of the
+    # (app/papers/dynamic_tp.py): the average distance of its cycles, a share of the
     # price (NULL: no cycle), how many, and when it was measured.
     dynamic_tp_move: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
     dynamic_tp_cycles: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -1,8 +1,10 @@
 """A Keltner averaging paper's dynamic take-profit (docs/papers.md#dynamic-take-profit):
-the average move of its last DAYS' cycles, from a good entry to a good sell
+the average distance of its last DAYS' cycles, up or down, from a good entry to a
+good sell
 (app/executors/keltner_averaging.py average_cycle_move), for each paper once per
-EVERY. For looking at only: nothing trades on it. Stored as a share of the price
-- the dashboard multiplies it by the paper's leverage, whichever that is by then.
+EVERY, and when its leverage is edited. For looking at only: nothing trades on it.
+Stored as a share of the price - the dashboard multiplies it by the paper's leverage,
+whichever that is by then.
 
 Runs as a loop in the market-data service, like the preparation."""
 
@@ -42,21 +44,25 @@ def measure(paper_direction: str, candles: list[Candle]) -> tuple[float | None, 
     return average_cycle_move(guard, times, times[-1] - timedelta(days=DAYS))
 
 
-async def _refresh(paper: Paper) -> None:
+def has_dynamic_tp(paper: Paper) -> bool:
+    return paper.kind == "averaging" and paper.executor == "keltner"
+
+
+async def refresh(paper: Paper) -> None:
+    """Measures it now and stores it - also on `paper`."""
     per_day = 24 * 60 // INTERVAL_MINUTES[paper.timeframe]
     candles = await recent_candles(paper.asset, paper.timeframe, DAYS * per_day + CANDLE_LOOKBACK)
     move, cycles = await asyncio.to_thread(measure, paper.direction, candles)
+    stored = None if move is None else Decimal(str(round(move, 6)))
+    now = datetime.now(UTC)
     async with async_session() as session, session.begin():
         await session.execute(
             update(Paper)
             .where(Paper.id == paper.id)
-            .values(
-                dynamic_tp_move=None if move is None else Decimal(str(round(move, 6))),
-                dynamic_tp_cycles=cycles,
-                dynamic_tp_at=datetime.now(UTC),
-            )
+            .values(dynamic_tp_move=stored, dynamic_tp_cycles=cycles, dynamic_tp_at=now)
         )
-    logger.info("paper %d: dynamic take-profit move %s over %d cycles", paper.id, move, cycles)
+    paper.dynamic_tp_move, paper.dynamic_tp_cycles, paper.dynamic_tp_at = stored, cycles, now
+    logger.info("paper %d: dynamic take-profit distance %s over %d cycles", paper.id, move, cycles)
 
 
 async def run_dynamic_tp_loop() -> None:
@@ -80,7 +86,7 @@ async def run_dynamic_tp_loop() -> None:
                     )
                 ).all()
             for paper in papers:
-                await _refresh(paper)
+                await refresh(paper)
         except Exception:
             logger.exception("dynamic take-profit loop failed")
         await asyncio.sleep(POLL_SECONDS)

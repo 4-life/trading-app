@@ -82,7 +82,7 @@ A **single** paper can set its own **stop-loss** (`stop_loss_pct`) and **take-pr
 
 ## Dynamic take-profit
 
-Each Keltner averaging paper measures, once per 24 hours, the average move of its last 30 days' cycles: from a good entry (a Buy on a red Supertrend) to the next good sell (a Sell on a green one), then the next cycle. Every full cycle counts, winners and losers alike, so the average can be negative; a cycle still open doesn't. Times the paper's leverage it's a % of margin, shown in the paper's **Edit** dialog, the same for both sides of a both paper. **For looking at only**: nothing trades on it, the paper's `take_profit_pct` stays what counts. In `papers.dynamic_tp_move` / `dynamic_tp_cycles` / `dynamic_tp_at`; `backend/app/papers/dynamic_tp.py`, a loop in the market-data service.
+Each Keltner averaging paper measures, once per 24 hours and whenever its leverage is edited, the average distance of its last 30 days' cycles: from a good entry (a Buy on a red Supertrend) to the next good sell (a Sell on a green one), then the next cycle. Every full cycle counts, up or down alike (the distance, not a profit: it says nothing about whether the paper makes money); a cycle still open doesn't. Times the paper's leverage it's a % of margin, shown in the paper's **Edit** dialog, the same for both sides of a both paper. **For looking at only**: nothing trades on it, the paper's `take_profit_pct` stays what counts. In `papers.dynamic_tp_move` / `dynamic_tp_cycles` / `dynamic_tp_at`; `backend/app/papers/dynamic_tp.py`, a loop in the market-data service.
 
 ## Where a backtest starts
 

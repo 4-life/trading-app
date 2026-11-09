@@ -4,7 +4,7 @@ Revision ID: 0041
 Revises: 0040
 Create Date: 2026-11-07
 
-A Keltner averaging paper's average move from a good entry to a good sell over
+A Keltner averaging paper's average distance from a good entry to a good sell over
 the last 30 days, measured once per 24h (app/papers/dynamic_tp.py), for looking at.
 """
 

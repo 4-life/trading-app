@@ -28,7 +28,7 @@ import { PositionManagementFields } from '../position-management-fields';
 // For looking at only: nothing trades on it (docs/papers.md#dynamic-take-profit).
 function DynamicTakeProfit({ paper }: { paper: Paper }) {
   const { dynamic_tp_at: at, dynamic_tp_move: move, dynamic_tp_cycles: cycles } = paper;
-  const percent = (share: number) => `${share > 0 ? '+' : ''}${share.toFixed(2)}%`;
+  const percent = (share: number) => `${share.toFixed(2)}%`;
   return (
     <p className="text-xs text-muted-foreground">
       Dynamic TP:{' '}
@@ -37,7 +37,7 @@ function DynamicTakeProfit({ paper }: { paper: Paper }) {
         : move === null
           ? `no full cycle in the last 30 days · measured ${formatDateTime(at)}`
           : `${percent(Number(move) * Number(paper.leverage) * 100)} of margin ` +
-            `(average move ${percent(Number(move) * 100)} at ×${String(Number(paper.leverage))}, ` +
+            `(average distance ${percent(Number(move) * 100)} at ×${String(Number(paper.leverage))}, ` +
             `${String(cycles ?? 0)} cycles in the last 30 days) · measured ${formatDateTime(at)}`}
     </p>
   );
