@@ -6,14 +6,16 @@ stop-loss, no take-profit - see docs/keltner-strategy-engine.md. An
 averaging paper adds its own rules (LiveGuard, app/executors/keltner_averaging.py).
 Run: python -m app.executors.keltner"""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from app.executors.base import Tick, direction_allowed, last_entry_at, recent_candles, run
-from app.executors.keltner_averaging import KeltnerGuard, keltner_guard
+from app.executors.keltner_averaging import KeltnerGuard, keltner_guard, shock_strength_add
 from app.executors.keltner_signals import keltner_signals
 from app.feature_engine.engine import INTERVAL_MINUTES
+from app.market_data.shocks import Shock
 from app.notifications.error_reporting import run_service
 from app.order_queue import Direction, Signal
 from app.papers.models import Paper
@@ -53,6 +55,8 @@ class LiveGuard:
     rules: KeltnerGuard
     last: int
     entry: int | None  # the open position's entry candle
+    last_open: datetime  # the last closed candle's open time
+    step: timedelta
 
     def may_open(self, direction: Direction) -> bool:
         return self.rules.may_open(direction, self.last)
@@ -68,6 +72,18 @@ class LiveGuard:
     ) -> bool:
         pnl = self._pnl(direction, entry_price, size, realized)
         return self.rules.strength_add(direction, self.last, pnl)
+
+    def shock_strength_add(
+        self,
+        direction: Direction,
+        entry_price: Decimal,
+        size: Decimal,
+        realized: Decimal,
+        shocks: Sequence[Shock],
+    ) -> bool:
+        pnl = self._pnl(direction, entry_price, size, realized)
+        until = self.last_open + self.step
+        return shock_strength_add(shocks, direction, self.last_open, until, pnl)
 
     def _pnl(
         self, direction: Direction, entry_price: Decimal, size: Decimal, realized: Decimal
@@ -101,7 +117,7 @@ class KeltnerStrategy:
             # The entry candle: the last one closed by the entry.
             closed = [k for k, c in enumerate(candles) if c.open_time + step <= opened_at]
             entry = closed[-1] if closed else 0
-        return LiveGuard(rules, last, entry)
+        return LiveGuard(rules, last, entry, candles[last].open_time, step)
 
     async def before_poll(self, papers: list[Paper], poll_started_at: datetime) -> None:
         return None

@@ -5,7 +5,12 @@ from math import sin
 
 from app.backtest.averaging import Rules, simulate
 from app.backtest.bars import Bar, SimTrade, exit_at
-from app.executors.keltner_averaging import KeltnerGuard, average_cycle_move, keltner_guard
+from app.executors.keltner_averaging import (
+    KeltnerGuard,
+    average_cycle_move,
+    keltner_guard,
+    shock_strength_add,
+)
 from app.executors.position_management import TAKE_PROFIT_EXIT
 from app.executors.supertrend import signals as supertrend_signals
 from app.market_data.shocks import Shock
@@ -146,6 +151,34 @@ def test_a_strength_add_on_the_supertrend_flip_in_profit() -> None:
     assert g.strength_add("long", 1, pnl=1.0)
     assert not g.strength_add("long", 1, pnl=-1.0)
     assert not g.strength_add("short", 1, pnl=1.0)  # a short's flip is to red
+
+
+def test_a_shock_in_the_positions_favour_is_a_strength_add_in_profit() -> None:
+    since, until = T0, T0 + timedelta(hours=1)
+    bullrun = Shock(T0, T0 + timedelta(minutes=30), "bullrun", "coin", "")
+    panic = Shock(T0, T0 + timedelta(minutes=30), "panic", "market", "")
+    assert shock_strength_add([bullrun], "long", since, until, pnl=1.0)
+    assert shock_strength_add([panic], "short", since, until, pnl=1.0)
+    assert not shock_strength_add([panic], "long", since, until, pnl=1.0)  # against it
+    assert not shock_strength_add([bullrun], "short", since, until, pnl=1.0)
+    assert not shock_strength_add([bullrun], "long", since, until, pnl=-1.0)  # at a loss
+    # Detected in another candle.
+    assert not shock_strength_add([bullrun], "long", until, until + timedelta(hours=1), pnl=1.0)
+
+
+def test_the_backtest_adds_on_a_bullrun_in_profit_once() -> None:
+    # In at 100; a bullrun detected in candle 2 (closes at 102, in profit): a core add there.
+    closes = [100.0, 101.0, 102.0, 105.0, 105.0]
+    g = _guard(closes)
+    bullrun = Shock(
+        T0 + timedelta(hours=2), T0 + timedelta(hours=2, minutes=40), "bullrun", "market", ""
+    )
+    [t] = simulate(_bars(closes), [], RULES, signals_held=[_buy(0, 100)], guard=g, shocks=[bullrun])
+    assert [(f.side, f.time, f.price) for f in t.fills][:2] == [
+        ("buy", T0, 100.0),
+        ("buy", T0 + timedelta(hours=2), 102.0),
+    ]
+    assert sum(f.side == "buy" for f in t.fills) == 2
 
 
 def test_the_backtest_keeps_the_core_and_spaces_the_signal_adds() -> None:

@@ -13,14 +13,17 @@ backtest (app/backtest/averaging.py) use the same.
 - Signal adds: at most MAX_SIGNAL_ADDS, each SIGNAL_ADD_SPACING below the
   last buy at least (a short: above).
 - Strength add: a core unit, sized like the first entry, on the candle the
-  Supertrend flips the position's way (a long: green) with the position in
-  profit at its close."""
+  Supertrend flips the position's way (a long: green) - or a market shock in
+  its favour (a long: a bullrun, a short: a panic; the market's or the coin's
+  own) is detected in - with the position in profit at its close."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
 from app.executors.keltner_signals import keltner_signals
 from app.executors.supertrend import signals as supertrend_signals
+from app.market_data.shocks import Shock
 
 MAX_SIGNAL_ADDS = 5  # a position's signal adds
 SIGNAL_ADD_SPACING = 0.01  # a signal add's distance below the last buy at least (a short: above)
@@ -64,6 +67,16 @@ class KeltnerGuard:
         exits = self.sell if direction == "long" else self.buy
         first = not any(exits[entry + 1 : i])
         return first and self.line[i] == self.line[entry]
+
+
+def shock_strength_add(
+    shocks: Sequence[Shock], direction: str, since: datetime, until: datetime, pnl: float
+) -> bool:
+    """A shock in the position's favour - a long's bullrun, a short's panic -
+    detected in the candle from `since` to its close `until`, with its whole
+    PnL there (`pnl`) in profit: a strength add at that close."""
+    kind = "bullrun" if direction == "long" else "panic"
+    return pnl > 0 and any(s.kind == kind and since < s.detected_at <= until for s in shocks)
 
 
 def average_cycle_move(

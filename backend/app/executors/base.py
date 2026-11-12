@@ -10,6 +10,7 @@ place orders.
 """
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -41,6 +42,7 @@ from app.feature_engine.models import Feature
 from app.market_data.limits import market_limits
 from app.market_data.models import Candle, Trade
 from app.market_data.shock_state import SHOCK_BLOCK, exit_held, recent_shocks
+from app.market_data.shocks import Shock
 from app.order_queue import AUTO_TRADING_OFF, Direction, Signal, queue_decision, reject_decision
 from app.papers.models import TRADING_KINDS, Paper
 from app.risk_engine.blocks import is_entry_blocked
@@ -101,6 +103,18 @@ class Guard(Protocol):
         self, direction: Direction, entry_price: Decimal, size: Decimal, realized: Decimal
     ) -> bool:
         """A strength add (a core unit) at that candle's close."""
+        ...
+
+    def shock_strength_add(
+        self,
+        direction: Direction,
+        entry_price: Decimal,
+        size: Decimal,
+        realized: Decimal,
+        shocks: Sequence[Shock],
+    ) -> bool:
+        """A strength add at that candle's close for a shock in the
+        position's favour detected in it."""
         ...
 
 
@@ -461,8 +475,15 @@ async def _averaging(
                 direction, buys[-1][1], grid.signal_adds
             ):
                 signal = None
-            if signal is None and guard.strength_add(
-                direction, position.entry_price, position.size, realized
+            if signal is None and (
+                guard.strength_add(direction, position.entry_price, position.size, realized)
+                or guard.shock_strength_add(
+                    direction,
+                    position.entry_price,
+                    position.size,
+                    realized,
+                    await recent_shocks(paper.asset, SHOCK_BLOCK),
+                )
             ):
                 signal = Signal("add", direction, STRENGTH_ADD)
     return signal, buys[-1][0]

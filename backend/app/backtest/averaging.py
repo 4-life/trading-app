@@ -89,7 +89,7 @@ from app.backtest.models import OPEN_AT_END, BacktestFill, BacktestTrade
 from app.config import settings
 from app.db import async_session
 from app.executors.atr_stop import ATR_STOP_EXIT, atr_lines, stopped
-from app.executors.keltner_averaging import KeltnerGuard
+from app.executors.keltner_averaging import KeltnerGuard, shock_strength_add
 from app.executors.position_management import (
     MAX_DRAWDOWN_EXIT,
     OUT_OF_MARGIN_EXIT,
@@ -597,7 +597,14 @@ def simulate(
                     size = rules.initial_size
                     pos.buy(bar.time, signal.entry_price, size, rules.leverage, fee_rate)
                     pos.signal_adds += 1
-                elif not held and guard is not None and guard.strength_add(direction, i, pnl):
+                elif (
+                    not held
+                    and guard is not None
+                    and (
+                        guard.strength_add(direction, i, pnl)
+                        or shock_strength_add(shocks, direction, bar.time, bar.time + step, pnl)
+                    )
+                ):
                     # A strength add at the close: a core unit, sized like the first entry.
                     size = rules.initial_size
                     pos.buy(bar.time, bar.close, size, rules.leverage, fee_rate, core=True)
