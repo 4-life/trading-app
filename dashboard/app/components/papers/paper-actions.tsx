@@ -1,5 +1,13 @@
 import { Popover } from "@base-ui/react/popover";
-import { EllipsisVerticalIcon, PowerIcon, PowerOffIcon, RocketIcon, Trash2Icon } from "lucide-react";
+import {
+  EllipsisVerticalIcon,
+  PowerIcon,
+  PowerOffIcon,
+  RocketIcon,
+  Trash2Icon,
+  TrendingDownIcon,
+  TrendingUpIcon,
+} from "lucide-react";
 import { useState } from "react";
 import { useFetcher } from "react-router";
 
@@ -16,12 +24,19 @@ export function PaperActions({ paper }: { paper: Paper }) {
   const fetcher = useFetcher<ActionResult>();
   const [open, setOpen] = useState(false);
   const busy = fetcher.state !== "idle";
-  const submit = (intent: string) =>
-    void fetcher.submit({ intent, paperId: String(paper.id) }, { method: "post" });
+  const submit = (intent: string, extra: Record<string, string> = {}) =>
+    void fetcher.submit({ intent, paperId: String(paper.id), ...extra }, { method: "post" });
   // Same rules the API enforces (docs/papers.md#lifecycle): a scanner needs
   // no profit, its coins follow its mode.
   const scanned = paper.parent_id !== null;
   const backtestProfit = Number(paper.backtest_return_pct ?? 0) > 0;
+  // Long / Short: an enabled, ready paper with an asset and no open position,
+  // in the directions it trades.
+  const canOpen =
+    paper.enabled && paper.kind !== "scanner" && paper.prep_status === null && !paper.has_open_position;
+  const opens = (["long", "short"] as const).filter(
+    (d) => canOpen && (paper.direction === "both" || paper.direction === d),
+  );
   const canGoLive =
     paper.kind === "scanner" ||
     (!scanned && (Number(paper.profitability_demo) > 0 || backtestProfit));
@@ -42,7 +57,31 @@ export function PaperActions({ paper }: { paper: Paper }) {
               className="flex w-48 flex-col gap-1 rounded-lg border bg-background p-1.5 shadow-md [&>button]:w-full [&>button]:justify-start"
               onClick={() => setOpen(false)}
             >
-              <EditPaperDialog paper={paper} />
+              {opens.map((direction) => {
+              const label = direction === "long" ? "Open long" : "Open short";
+              const icon = direction === "long" ? <TrendingUpIcon /> : <TrendingDownIcon />;
+              const open = () => submit("paperOpen", { direction });
+              // Live: real money - asked first.
+              return paper.mode === "live" ? (
+                <ConfirmDialog
+                  key={direction}
+                  trigger={<Button size="xs" variant="outline" disabled={busy} />}
+                  title={`${label} on paper ${String(paper.id)}?`}
+                  description={`A market order for ${paper.asset ?? ""} with real money, sized like the paper's first entry.`}
+                  confirmLabel={label}
+                  onConfirm={open}
+                >
+                  {icon}
+                  {label}
+                </ConfirmDialog>
+              ) : (
+                <Button key={direction} size="xs" variant="outline" disabled={busy} onClick={open}>
+                  {icon}
+                  {label}
+                </Button>
+              );
+            })}
+            <EditPaperDialog paper={paper} />
               {isSweepable(paper) && <SweepDialog paper={paper} />}
               {paper.enabled && paper.mode === "demo" && (
                 <ConfirmDialog

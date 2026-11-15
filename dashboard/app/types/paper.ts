@@ -34,6 +34,7 @@ export interface Paper {
   disabled_by: string | null;
   disabled_reason: string | null;
   blocked_reason: string | null;
+  has_open_position: boolean; // GET /papers
   max_leverage: string | null; // the asset's at the selected provider; null: not known yet
   // An averaging paper's position management (docs/papers.md#averaging-papers);
   // null for the other kinds. Shares are fractions ("0.3" = 30%).

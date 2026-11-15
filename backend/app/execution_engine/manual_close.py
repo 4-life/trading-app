@@ -1,5 +1,10 @@
 """The dashboard's position buttons.
 
+- Long / Short (a paper's): queues an entry for an enabled paper with no
+  open position, reason `manual_open` - through the risk engine and the
+  execution engine as any executor's entry (not held back by the live
+  auto-trading switch: that's for the app's own entries). The paper's
+  executor manages the position from there.
 - Close: queues an exit request for one open position. It goes through the
   same order queue as any executor exit (risk engine, then execution engine)
   and is logged with reason `manual_close`; once it's placed the paper is
@@ -40,6 +45,19 @@ from app.system.exchange_api import taker_fee_rate
 
 CLOSED_ON_EXCHANGE = "closed_on_exchange"
 CLOSED_ON_EXCHANGE_STOP = "position closed on the exchange"
+
+
+MANUAL_OPEN = "manual_open"
+
+
+async def request_manual_open(paper: Paper, direction: Literal["long", "short"]) -> int:
+    """Returns the queued decision's id; raises OrderInFlight if the paper
+    has one in flight."""
+    signal = Signal("enter", direction, MANUAL_OPEN)
+    try:
+        return await queue_decision(paper, signal, await latest_price(paper.asset, paper.timeframe))
+    except IntegrityError as exc:
+        raise OrderInFlight(f"paper {paper.id} already has an order in flight") from exc
 
 
 class NoOpenPosition(Exception):

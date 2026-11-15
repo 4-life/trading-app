@@ -18,6 +18,7 @@ from app.backtest.models import OPEN_AT_END, BacktestTrade, SweepBatch
 from app.backtest.sweep import SURVIVAL_MARGIN, SweepError
 from app.db import async_session
 from app.execution_engine.live import live_client
+from app.execution_engine.manual_close import OrderInFlight, request_manual_open
 from app.execution_engine.models import (
     IN_FLIGHT_OUTCOMES,
     EquitySnapshot,
@@ -25,6 +26,7 @@ from app.execution_engine.models import (
     Position,
     TradingDecision,
 )
+from app.executors.base import direction_allowed
 from app.market_data.assets import configured_assets
 from app.market_data.limits import all_market_limits, market_limits
 from app.papers.dynamic_tp import has_dynamic_tp
@@ -189,6 +191,8 @@ class PaperOut(PositionManagement, PaperExits):
     disabled_reason: str | None
     # Set while the risk engine blocks new entries for this paper (Redis).
     blocked_reason: str | None = None
+    # An open position (GET /papers only; false elsewhere).
+    has_open_position: bool = False
     # The asset's max leverage at the selected provider; null: not known yet.
     max_leverage: Decimal | None = None
     # Its maintenance margin there, a share of the notional - an early
@@ -273,11 +277,17 @@ async def list_papers() -> list[PaperOut]:
         rows = (await session.scalars(select(Paper).order_by(Paper.id))).all()
         backtests = await _backtest_returns(session)
         nets_usd = await _backtest_nets_usd(session)
+        open_ids = set(
+            (
+                await session.scalars(select(Position.paper_id).where(Position.closed_at.is_(None)))
+            ).all()
+        )
     limits = await all_market_limits()
     out = []
     for p in rows:
         paper = PaperOut.model_validate(p)
         paper.blocked_reason = await block_reason(p.executor, p.id)
+        paper.has_open_position = p.id in open_ids
         paper.backtest_return_pct = backtests.get(p.id)
         paper.backtest_net_usd = nets_usd.get(p.id)
         limit = limits.get(p.asset or "")
@@ -688,6 +698,40 @@ async def switch_to_live(paper_id: int) -> PaperOut:
                 status_code=409, detail=f"{paper.asset} already has a live paper"
             ) from exc
         return PaperOut.model_validate(paper)
+
+
+class OpenIn(BaseModel):
+    direction: Literal["long", "short"]
+
+
+class OpenOut(BaseModel):
+    decision_id: int
+
+
+@router.post("/papers/{paper_id}/open", response_model=OpenOut)
+async def open_position(paper_id: int, payload: OpenIn) -> OpenOut:
+    """The dashboard's Long / Short: queues an entry (reason `manual_open`)
+    for an enabled paper with an asset, ready, with no open position or order
+    in flight, in a direction its own allows - see docs/api.md."""
+    async with async_session() as session:
+        paper = await _get(session, paper_id)
+        if paper.kind == "scanner":
+            raise HTTPException(status_code=422, detail="a scanner paper has no asset to trade")
+        if not direction_allowed(paper.direction, payload.direction):
+            raise HTTPException(
+                status_code=422,
+                detail=f"a {paper.direction} paper doesn't trade {payload.direction}",
+            )
+        if not paper.enabled:
+            raise HTTPException(status_code=409, detail="enable the paper first")
+        if paper.prep_status is not None:
+            raise HTTPException(status_code=409, detail=f"paper is {paper.prep_status} - wait")
+        await _require_idle(session, paper, "opening a position")
+    try:
+        decision_id = await request_manual_open(paper, payload.direction)
+    except OrderInFlight as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return OpenOut(decision_id=decision_id)
 
 
 @router.post("/papers/{paper_id}/disable", response_model=PaperOut)

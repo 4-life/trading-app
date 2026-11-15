@@ -35,6 +35,12 @@ export const paperActions: Record<string, ActionHandler> = {
     }),
   paperLive: (request, form) =>
     api(request, `/papers/${paperId(form)}/live`, { method: "POST" }),
+  // The row menu's Long / Short (docs/papers.md#manual-entry).
+  paperOpen: (request, form) =>
+    api(request, `/papers/${paperId(form)}/open`, {
+      method: "POST",
+      body: { direction: form.get("direction") === "short" ? "short" : "long" },
+    }),
   paperDisable: (request, form) =>
     api(request, `/papers/${paperId(form)}/disable`, { method: "POST" }),
   paperEnable: (request, form) =>
