@@ -51,6 +51,10 @@ class OpenPositionOut(BaseModel):
     entry_price: Decimal
     current_price: Decimal | None
     unrealized_pnl_usd: Decimal | None
+    # Realized so far by its partial closes (an averaging paper's units sold),
+    # net of fees: with the unrealized, the position's whole PnL on its
+    # average entry - what its take-profit and strength adds go by.
+    realized_pnl_usd: Decimal
     exposure_usd: Decimal | None
     leverage: Decimal
     # Margin put into the position - the basis for PnL percentages.
@@ -188,6 +192,7 @@ async def portfolio(mode: Literal["demo", "live"] = Query(default="demo")) -> Po
                 entry_price=p.entry_price,
                 current_price=price,
                 unrealized_pnl_usd=pnl,
+                realized_pnl_usd=p.realized_pnl_usd or Decimal(0),
                 exposure_usd=exposure,
                 leverage=p.leverage,
                 margin_usd=p.margin_usd,

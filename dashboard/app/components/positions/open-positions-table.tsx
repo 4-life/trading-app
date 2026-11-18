@@ -11,7 +11,7 @@ const COLUMNS = [
   "Size",
   "Entry Price",
   "Current Price",
-  "Unrealized PnL",
+  "PnL",
   "Margin",
   "Exposure",
   "Exit",

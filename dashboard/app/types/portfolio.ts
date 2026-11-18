@@ -23,6 +23,9 @@ export interface OpenPosition {
   entry_price: string;
   current_price: string | null;
   unrealized_pnl_usd: string | null;
+  // Realized by its partial closes (units sold), net of fees; with the
+  // unrealized: its whole PnL on the average entry.
+  realized_pnl_usd: string;
   exposure_usd: string | null;
   leverage: string;
   margin_usd: string;

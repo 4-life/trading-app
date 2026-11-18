@@ -15,6 +15,9 @@ function exitRule(p: OpenPosition): string {
 }
 
 export function OpenPositionRow({ position: p }: { position: OpenPosition }) {
+  // The whole PnL on the average entry: the units sold so far plus the size held.
+  const realized = Number(p.realized_pnl_usd);
+  const total = p.unrealized_pnl_usd === null ? null : Number(p.unrealized_pnl_usd) + realized;
   return (
     <TableRow>
       <TableCell className="text-muted-foreground">{`#${String(p.paper_id)}`}</TableCell>
@@ -24,9 +27,14 @@ export function OpenPositionRow({ position: p }: { position: OpenPosition }) {
       <TableCell>{formatNumber(p.size)}</TableCell>
       <TableCell>{formatPrice(p.entry_price)}</TableCell>
       <TableCell>{formatPrice(p.current_price)}</TableCell>
-      <TableCell className={pnlClass(p.unrealized_pnl_usd)}>
-        {formatUsd(p.unrealized_pnl_usd)}
-        <PnlPercent pnl={p.unrealized_pnl_usd} margin={p.margin_usd} />
+      <TableCell className={pnlClass(total)}>
+        {formatUsd(total)}
+        <PnlPercent pnl={total === null ? null : String(total)} margin={p.margin_usd} />
+        {realized !== 0 && (
+          <div className="text-xs text-muted-foreground">
+            {`held ${formatUsd(p.unrealized_pnl_usd)} · sold ${formatUsd(realized)}`}
+          </div>
+        )}
       </TableCell>
       <TableCell>{formatUsd(p.margin_usd)}</TableCell>
       <TableCell>{formatUsd(p.exposure_usd)}</TableCell>

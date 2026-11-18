@@ -55,7 +55,7 @@ Open and closed positions.
 | Size | |
 | Entry Price | |
 | Current Price | |
-| Unrealized PnL | |
+| PnL | open: the position's **whole PnL on its average entry** — the size held at the current price plus what its units sold so far realized (net of fees), as its take-profit and strength adds measure it; under it "held $X · sold $Y" once a unit was sold |
 | Margin | an open position's current margin, adds included |
 | Exposure | |
 | Exit | the position's exit rule |
