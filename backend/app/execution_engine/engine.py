@@ -25,7 +25,13 @@ from app.execution_engine.demo import (
     open_side,
     profitability_pct,
 )
-from app.execution_engine.live import LiveClient, LiveOrderError, live_client, round_size
+from app.execution_engine.live import (
+    LiveClient,
+    LiveFill,
+    LiveOrderError,
+    live_client,
+    round_size,
+)
 from app.execution_engine.models import (
     ClosedPosition,
     DemoBalance,
@@ -34,6 +40,7 @@ from app.execution_engine.models import (
     TradingDecision,
 )
 from app.executors.position_management import add_terms, stops_paper
+from app.market_data.limits import market_limits
 from app.market_data.models import FundingRate
 from app.notifications.alerts import alert
 from app.notifications.trades import notify_order
@@ -293,7 +300,14 @@ async def _close_live(
             size = round_size(position.size * fraction, client.size_decimals(paper.asset))
             if size <= 0:
                 raise FillError("partial close size rounds to zero")
-        fill = await client.close(paper.asset, is_buy, size)
+        else:
+            # The whole of it: what the exchange holds - a reduce-only order for
+            # more than that may not fill.
+            held = {p.asset: p.size for p in await client.positions()}.get(paper.asset, Decimal(0))
+            if not held_on_exchange(position.direction, held):
+                raise ProviderRejected("not on the exchange - closed or liquidated there")
+            size = min(position.size, abs(held))
+        fill = await _close_with_retries(client, paper.asset, is_buy, size)
     except LiveOrderError as exc:
         raise ProviderRejected(str(exc)) from exc
     fee = await client.fee(fill)
@@ -318,7 +332,7 @@ async def _close_live(
     pnl -= await entry_fee_share(session, position, min(fill.size, position.size))
     position.realized_pnl_usd = (position.realized_pnl_usd or Decimal(0)) + pnl
     position.close_price = fill.price
-    if fill.size < position.size:
+    if fraction < 1 or fill.size < size:
         position.margin_usd *= 1 - closed_share
         position.size -= fill.size
         logger.warning("position %d: partial close, %s left open", position.id, position.size)
@@ -329,6 +343,26 @@ async def _close_live(
     await session.flush()
     await update_profitability(session, paper, "live")
     return order.id
+
+
+# A close's worst price accepted, a share of the mid, each tried in turn when
+# the order doesn't fill (None: LIVE_SLIPPAGE_PCT) - an exit must go through.
+CLOSE_SLIPPAGES: tuple[float | None, ...] = (None, 0.01, 0.02, 0.05)
+
+
+async def _close_with_retries(
+    client: LiveClient, asset: str, is_buy: bool, size: Decimal
+) -> LiveFill:
+    for k, slippage in enumerate(CLOSE_SLIPPAGES):
+        try:
+            return await client.close(asset, is_buy, size, slippage)
+        except LiveOrderError:
+            if k == len(CLOSE_SLIPPAGES) - 1:
+                raise
+            logger.warning(
+                "%s close of %s not filled at slippage %s - retrying", asset, size, slippage
+            )
+    raise AssertionError("unreachable")
 
 
 async def _enter_live(
@@ -565,6 +599,13 @@ async def _process(decision_id: int, adapter: MarketAdapter) -> None:
             )
             decision.risk_reason = f"{decision.risk_reason or ''} | execution: {exc}".lstrip(" |")
             logger.warning("decision %d failed: %s", decision_id, exc)
+            if decision.signal == "exit" and decision.mode == "live":
+                await alert(
+                    SERVICE_NAME,
+                    "critical",
+                    f"paper {decision.paper_id} {decision.asset}: {decision.reason} exit failed - "
+                    f"{exc}",
+                )
             return
         decision.outcome = "placed"
         decision.order_id = placed = order_id
@@ -597,8 +638,18 @@ async def _process(decision_id: int, adapter: MarketAdapter) -> None:
         await alert(SERVICE_NAME, "info", f"paper {disabled.id} {disabled.asset}: {why}")
 
 
+async def exchange_maintenance(asset: str) -> Decimal | None:
+    """The exchange's maintenance margin for `asset` (a share of the notional)."""
+    limits = await market_limits(asset)
+    return None if limits is None else Decimal(str(limits.maintenance_margin))
+
+
 async def _liquidate(
-    position_id: int, quote: Quote, source: str, client: LiveClient | None = None
+    position_id: int,
+    quote: Quote,
+    source: str,
+    client: LiveClient | None = None,
+    exchange_mm: Decimal | None = None,
 ) -> None:
     market_price = quote.mid
     maintenance = Decimal(str(settings.maintenance_margin_pct))
@@ -615,6 +666,7 @@ async def _liquidate(
             position.margin_usd,
             market_price,
             maintenance,
+            exchange_mm,
         ):
             return
         paper = await session.get(Paper, position.paper_id)
@@ -683,6 +735,7 @@ async def _liquidate_breached(adapter: MarketAdapter, source: str) -> None:
     client = await live_client() if any(p.mode == "live" for p in positions) else None
     quotes: dict[tuple[str, str], Quote] = {}
     exchange: dict[str, Decimal] | None = None  # read once, when a live one is due
+    maintenances: dict[str, Decimal | None] = {}
     for position in positions:
         try:
             key = (position.mode, position.asset)
@@ -696,6 +749,9 @@ async def _liquidate_breached(adapter: MarketAdapter, source: str) -> None:
                     market = await adapter.get_market_data(position.asset)
                     quotes[key] = Quote(market.bid, market.ask)
             quote = quotes[key]
+            if position.asset not in maintenances:
+                maintenances[position.asset] = await exchange_maintenance(position.asset)
+            exchange_mm = maintenances[position.asset]
             if liquidation_due(
                 position.direction,
                 position.entry_price,
@@ -703,6 +759,7 @@ async def _liquidate_breached(adapter: MarketAdapter, source: str) -> None:
                 position.margin_usd,
                 quote.mid,
                 maintenance,
+                exchange_mm,
             ):
                 if position.mode == "live" and client is not None:
                     if exchange is None:
@@ -719,7 +776,7 @@ async def _liquidate_breached(adapter: MarketAdapter, source: str) -> None:
                                 "or liquidated there: record it with Doesn't exist and its price",
                             )
                         continue
-                await _liquidate(position.id, quote, source, client)
+                await _liquidate(position.id, quote, source, client, exchange_mm)
         except Exception:
             logger.exception("position %d: liquidation check failed", position.id)
 

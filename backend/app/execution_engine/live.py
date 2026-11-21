@@ -86,7 +86,12 @@ class LiveClient(Protocol):
         """Sets isolated leverage, then a market order."""
         ...
 
-    async def close(self, asset: str, is_buy: bool, size: Decimal) -> LiveFill: ...
+    async def close(
+        self, asset: str, is_buy: bool, size: Decimal, slippage: float | None = None
+    ) -> LiveFill:
+        """A reduce-only market order; `slippage`: the worst price accepted
+        (a share of the mid), else LIVE_SLIPPAGE_PCT."""
+        ...
 
     async def add(self, asset: str, is_buy: bool, size: Decimal) -> LiveFill:
         """A market order growing the open isolated position - its leverage
@@ -158,8 +163,10 @@ class HyperliquidLiveClient:
             raise LiveOrderError(f"leverage update rejected: {response}")
         return await self._market(asset, is_buy, size)
 
-    async def close(self, asset: str, is_buy: bool, size: Decimal) -> LiveFill:
-        return await self._market(asset, is_buy, size)
+    async def close(
+        self, asset: str, is_buy: bool, size: Decimal, slippage: float | None = None
+    ) -> LiveFill:
+        return await self._market(asset, is_buy, size, slippage)
 
     async def add(self, asset: str, is_buy: bool, size: Decimal) -> LiveFill:
         return await self._market(asset, is_buy, size)
@@ -171,14 +178,16 @@ class HyperliquidLiveClient:
         if not isinstance(response, dict) or response.get("status") != "ok":
             raise LiveOrderError(f"margin transfer rejected: {response}")
 
-    async def _market(self, asset: str, is_buy: bool, size: Decimal) -> LiveFill:
+    async def _market(
+        self, asset: str, is_buy: bool, size: Decimal, slippage: float | None = None
+    ) -> LiveFill:
         response = await asyncio.to_thread(
             self._exchange.market_open,
             asset,
             is_buy,
             float(size),
             None,
-            settings.live_slippage_pct,
+            settings.live_slippage_pct if slippage is None else slippage,
         )
         return parse_order_response(response)
 

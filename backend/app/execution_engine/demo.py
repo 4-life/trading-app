@@ -127,6 +127,11 @@ def unrealized_pnl(direction: str, entry_price: Decimal, price: Decimal, size: D
     return sign * (price - entry_price) * size
 
 
+# The app closes this far before the exchange would: at this multiple of the
+# exchange's maintenance margin.
+EXCHANGE_MAINTENANCE_BUFFER = Decimal("1.5")
+
+
 def liquidation_due(
     direction: str,
     entry_price: Decimal,
@@ -134,11 +139,19 @@ def liquidation_due(
     margin_usd: Decimal,
     price: Decimal,
     maintenance_margin_pct: Decimal,
+    exchange_maintenance: Decimal | None = None,
 ) -> bool:
     """True once the remaining margin (margin + unrealized PnL) is at or
-    below the maintenance share of the initial margin."""
+    below the maintenance share of the initial margin - or, sooner, below
+    EXCHANGE_MAINTENANCE_BUFFER x the exchange's maintenance margin
+    (`exchange_maintenance`, a share of the notional; None: not known), so the
+    app closes it before the exchange liquidates it."""
     remaining = margin_usd + unrealized_pnl(direction, entry_price, price, size)
-    return remaining <= margin_usd * maintenance_margin_pct
+    floor = margin_usd * maintenance_margin_pct
+    if exchange_maintenance is not None:
+        exchange_floor = exchange_maintenance * size * price * EXCHANGE_MAINTENANCE_BUFFER
+        floor = max(floor, exchange_floor)
+    return remaining <= floor
 
 
 def profitability_pct(realized_pnl_usd: Decimal, margin_used_usd: Decimal) -> Decimal:

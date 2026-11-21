@@ -35,6 +35,18 @@ def test_liquidation_at_maintenance_margin() -> None:
     assert not liquidation_due(*short_args, Decimal(1000), maintenance)
 
 
+def test_the_app_closes_before_the_exchange_liquidates() -> None:
+    # Position 141: a short of 3.4935 ETH at 1604.5, $140 of margin, the
+    # exchange's maintenance 1.2% - it liquidates near 1625 (remaining ~$68).
+    args = ("short", Decimal("1604.5"), Decimal("3.4935"), Decimal(140))
+    app, exchange = Decimal("0.2"), Decimal("0.012")
+    assert not liquidation_due(*args, Decimal(1610), app, exchange)
+    # $101 of the exchange's $67 x 1.5 left at ~1615.6: closed there, before 1625.
+    assert liquidation_due(*args, Decimal(1616), app, exchange)
+    # Without it, only at 20% of the margin left (~1636): after the exchange.
+    assert not liquidation_due(*args, Decimal(1630), app)
+
+
 def test_profitability_is_return_on_margin() -> None:
     assert profitability_pct(Decimal(30), Decimal(1000)) == Decimal(3)
     assert profitability_pct(Decimal(-5), Decimal(0)) == Decimal(0)

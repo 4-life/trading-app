@@ -129,8 +129,12 @@ class LighterLiveClient:
         _check_sent("leverage update failed", response, error)
         return await self._market_order(market, is_buy, size, reduce_only=False)
 
-    async def close(self, asset: str, is_buy: bool, size: Decimal) -> LiveFill:
-        return await self._market_order(self._market(asset), is_buy, size, reduce_only=True)
+    async def close(
+        self, asset: str, is_buy: bool, size: Decimal, slippage: float | None = None
+    ) -> LiveFill:
+        return await self._market_order(
+            self._market(asset), is_buy, size, reduce_only=True, slippage=slippage
+        )
 
     async def add(self, asset: str, is_buy: bool, size: Decimal) -> LiveFill:
         return await self._market_order(self._market(asset), is_buy, size, reduce_only=False)
@@ -144,13 +148,19 @@ class LighterLiveClient:
         _check_sent("margin transfer failed", response, error)
 
     async def _market_order(
-        self, market: dict[str, Any], is_buy: bool, size: Decimal, *, reduce_only: bool
+        self,
+        market: dict[str, Any],
+        is_buy: bool,
+        size: Decimal,
+        *,
+        reduce_only: bool,
+        slippage: float | None = None,
     ) -> LiveFill:
         asset, market_id = market["symbol"], int(market["market_id"])
         mid = await self.mid_price(asset)
-        slippage = Decimal(str(settings.live_slippage_pct))
+        accepted = Decimal(str(settings.live_slippage_pct if slippage is None else slippage))
         # The worst average price accepted - beyond it the order doesn't fill.
-        worst = mid * (1 + slippage) if is_buy else mid * (1 - slippage)
+        worst = mid * (1 + accepted) if is_buy else mid * (1 - accepted)
         client_index = time.time_ns() // 1_000_000 % (2**47)  # unique per order
         _, response, error = await self._signer.create_market_order(
             market_index=market_id,
