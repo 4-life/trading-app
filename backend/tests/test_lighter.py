@@ -13,8 +13,8 @@ from app.exchange.lighter import (
     rate_limited,
     top_levels,
 )
-from app.execution_engine.live import LiveOrderError
-from app.execution_engine.live_lighter import average_fill, scaled
+from app.execution_engine.live import LiveOrderError, average_closing
+from app.execution_engine.live_lighter import account_trades, average_fill, scaled
 
 
 def test_funding_is_a_signed_fraction() -> None:
@@ -157,3 +157,31 @@ async def test_the_live_budget_is_counted_apart_from_market_data(
         await lighter._rest_slot()  # the data budget used up...
     await lighter._rest_slot("live")  # ...a live call still goes through at once
     assert redis.counts == {"lighter:rest:2": lighter.REST_PER_MINUTE, "lighter:rest:live:2": 1}
+
+
+def _trade(buyer: int, seller: int, size: str, price: str, timestamp: int) -> dict[str, object]:
+    return {
+        "bid_account_id": buyer,
+        "ask_account_id": seller,
+        "size": size,
+        "price": price,
+        "timestamp": timestamp,
+    }
+
+
+def test_closing_trades_outside_the_app_average_on_the_closing_side() -> None:
+    t0 = 1_763_700_000_000  # ms; Lighter may give seconds
+    trades = [
+        _trade(1, 9, "1", "1500", t0 - 1),  # before the position's last order
+        _trade(1, 9, "1", "1620", t0),
+        _trade(1, 9, "3", "1628", t0 // 1000 + 5),  # in seconds
+        _trade(9, 1, "2", "1610", t0),  # a sell
+        _trade(7, 9, "5", "1700", t0),  # another account's
+    ]
+    ours = account_trades(trades, 1)
+    assert len(ours) == 4
+    # A short's close: its buys from t0.
+    fill = average_closing(ours, is_buy=True, since_ms=t0)
+    assert fill is not None
+    assert fill.size == Decimal(4) and fill.price == Decimal(1626)
+    assert average_closing(ours, is_buy=True, since_ms=t0 + 60_000) is None

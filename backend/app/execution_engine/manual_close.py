@@ -17,11 +17,12 @@
   paper is disabled with it, as by a manual close.
 """
 
+import logging
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal, cast
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.db import async_session
@@ -29,19 +30,25 @@ from app.execution_engine.engine import (
     MANUAL_CLOSE,
     MANUAL_CLOSE_ONLY,
     entry_fee_share,
+    held_on_exchange,
     update_profitability,
 )
+from app.execution_engine.live import live_client
 from app.execution_engine.models import (
     IN_FLIGHT_OUTCOMES,
     ClosedPosition,
+    Order,
     Position,
     TradingDecision,
 )
 from app.executors.base import latest_price
+from app.notifications.alerts import alert
 from app.notifications.trades import notify_closed_on_exchange
 from app.order_queue import Signal, queue_decision
 from app.papers.models import Paper
 from app.system.exchange_api import taker_fee_rate
+
+logger = logging.getLogger(__name__)
 
 CLOSED_ON_EXCHANGE = "closed_on_exchange"
 CLOSED_ON_EXCHANGE_STOP = "position closed on the exchange"
@@ -132,3 +139,71 @@ async def record_closed_on_exchange(position_id: int, close_price: Decimal) -> N
             paper.disabled_reason = CLOSED_ON_EXCHANGE_STOP
             paper.updated_at = datetime.now(UTC)
     await notify_closed_on_exchange(position_id, position.size, close_price)
+
+
+# A live position the exchange no longer holds - in two checks in a row (an
+# order can fill there before its row commits here) - is recorded closed at
+# the exchange's own closing trades (record_vanished).
+_missing_once: set[int] = set()
+_unpriced_alerted: set[int] = set()
+
+
+async def record_vanished() -> None:
+    """Every open live position the exchange no longer holds - liquidated or
+    closed there - recorded as closed on the exchange (reason
+    `closed_on_exchange`, the paper disabled) at the average price of the
+    account's closing trades since its last order; without any found, one
+    alert asks the owner (Doesn't exist)."""
+    client = await live_client()
+    if client is None:
+        return
+    async with async_session() as session:
+        positions = (
+            await session.scalars(
+                select(Position).where(Position.mode == "live", Position.closed_at.is_(None))
+            )
+        ).all()
+        if not positions:
+            _missing_once.clear()
+            return
+        rows = await session.execute(
+            select(Order.position_id, func.max(Order.created_at))
+            .where(Order.position_id.in_([p.id for p in positions]))
+            .group_by(Order.position_id)
+        )
+        last_orders: dict[int, datetime] = {pid: at for pid, at in rows.all() if pid is not None}
+    held = {p.asset: p.size for p in await client.positions()}
+    missing = {
+        p.id for p in positions if not held_on_exchange(p.direction, held.get(p.asset, Decimal(0)))
+    }
+    confirmed = missing & _missing_once
+    _missing_once.clear()
+    _missing_once.update(missing - confirmed)
+    for position in positions:
+        if position.id not in confirmed:
+            continue
+        since = last_orders.get(position.id) or position.opened_at
+        fill = await client.closing_trades(position.asset, position.direction == "short", since)
+        if fill is None:
+            if position.id not in _unpriced_alerted:
+                _unpriced_alerted.add(position.id)
+                await alert(
+                    "execution-engine",
+                    "critical",
+                    f"position {position.id} ({position.direction} {position.asset}) is gone "
+                    "from the exchange and no closing trade was found: record it with "
+                    "Doesn't exist and its price",
+                )
+            continue
+        try:
+            await record_closed_on_exchange(position.id, fill.price)
+        except (NoOpenPosition, OrderInFlight) as exc:
+            logger.info("position %d: not recorded yet - %s", position.id, exc)
+            continue
+        await alert(
+            "execution-engine",
+            "critical",
+            f"position {position.id} ({position.direction} {position.asset}) was closed on the "
+            f"exchange (liquidated?) at {fill.price:.2f} - recorded, paper "
+            f"{position.paper_id} disabled",
+        )

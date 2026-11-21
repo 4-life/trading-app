@@ -12,6 +12,7 @@ use isolated margin at the paper's leverage."""
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import ROUND_DOWN, Decimal
 from typing import Any, Protocol
 
@@ -46,6 +47,25 @@ class LivePosition:
 class LiveAccount:
     account_value: Decimal
     withdrawable: Decimal
+
+
+def epoch_ms(value: Any) -> int:
+    """A trade's timestamp in milliseconds - given in seconds or milliseconds."""
+    t = int(value)
+    return t * 1000 if t < 10**12 else t
+
+
+def average_closing(
+    trades: list[tuple[int, bool, Decimal, Decimal]], is_buy: bool, since_ms: int
+) -> LiveFill | None:
+    """The account's trades on the closing side (`is_buy`: buys) from
+    `since_ms` - as (time ms, a buy, size, price) - as one fill at their
+    average price; None without any."""
+    picked = [(size, price) for t, buy, size, price in trades if buy == is_buy and t >= since_ms]
+    size = sum((s for s, _ in picked), Decimal(0))
+    if size == 0:
+        return None
+    return LiveFill(order_id=0, price=sum((s * p for s, p in picked), Decimal(0)) / size, size=size)
 
 
 def parse_order_response(response: Any) -> LiveFill:
@@ -104,6 +124,12 @@ class LiveClient(Protocol):
 
     async def fee(self, fill: LiveFill) -> Decimal:
         """The fee charged for the order."""
+        ...
+
+    async def closing_trades(self, asset: str, is_buy: bool, since: datetime) -> LiveFill | None:
+        """The account's trades on `asset` on the closing side (`is_buy`:
+        buys) since `since` - a close outside the app (a liquidation by the
+        exchange, or by hand) - as one fill at their average price."""
         ...
 
 
@@ -190,6 +216,15 @@ class HyperliquidLiveClient:
             settings.live_slippage_pct if slippage is None else slippage,
         )
         return parse_order_response(response)
+
+    async def closing_trades(self, asset: str, is_buy: bool, since: datetime) -> LiveFill | None:
+        fills = await asyncio.to_thread(self._info.user_fills, self.address)
+        trades = [
+            (epoch_ms(f["time"]), f["side"] == "B", Decimal(str(f["sz"])), Decimal(str(f["px"])))
+            for f in fills
+            if f.get("coin") == asset
+        ]
+        return average_closing(trades, is_buy, int(since.timestamp() * 1000))
 
     async def fee(self, fill: LiveFill) -> Decimal:
         """The fee Hyperliquid charged for the order; the taker-fee estimate

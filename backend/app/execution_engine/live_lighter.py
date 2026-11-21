@@ -8,12 +8,20 @@ Lighter accounts pay no trading fees."""
 
 import asyncio
 import time
+from datetime import datetime
 from decimal import ROUND_DOWN, ROUND_UP, Decimal
 from typing import Any
 
 from app.config import settings
 from app.exchange.lighter import LighterAdapter, UnknownMarket
-from app.execution_engine.live import LiveAccount, LiveFill, LiveOrderError, LivePosition
+from app.execution_engine.live import (
+    LiveAccount,
+    LiveFill,
+    LiveOrderError,
+    LivePosition,
+    average_closing,
+    epoch_ms,
+)
 
 FILL_WAIT_SECONDS = 15.0
 FILL_POLL_SECONDS = 2.0  # REST is scarce on Lighter (app/exchange/lighter.py)
@@ -42,6 +50,19 @@ def average_fill(trades: list[dict[str, Any]], client_index: int, account_index:
     if size == 0:
         raise LiveOrderError("rejected by provider: order not filled")
     return LiveFill(order_id=client_index, price=notional / size, size=size)
+
+
+def account_trades(
+    trades: list[dict[str, Any]], account_index: int
+) -> list[tuple[int, bool, Decimal, Decimal]]:
+    """This account's side of each trade: (time ms, a buy, size, price)."""
+    out = []
+    for t in trades:
+        buy = int(t.get("bid_account_id") or -1) == account_index
+        sell = int(t.get("ask_account_id") or -1) == account_index
+        if buy or sell:
+            out.append((epoch_ms(t["timestamp"]), buy, Decimal(t["size"]), Decimal(t["price"])))
+    return out
 
 
 def _check_sent(what: str, response: Any, error: str | None) -> None:
@@ -188,6 +209,20 @@ class LighterLiveClient:
             except LiveOrderError:
                 if time.monotonic() >= deadline:
                     raise
+
+    async def closing_trades(self, asset: str, is_buy: bool, since: datetime) -> LiveFill | None:
+        data = await self._markets.get_json(
+            "trades",
+            account_index=self._account_index,
+            market_id=int(self._market(asset)["market_id"]),
+            sort_by="timestamp",
+            limit=100,
+        )
+        return average_closing(
+            account_trades(data.get("trades") or [], self._account_index),
+            is_buy,
+            int(since.timestamp() * 1000),
+        )
 
     async def fee(self, fill: LiveFill) -> Decimal:
         return Decimal(0)
