@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable
 from datetime import UTC, datetime
 
@@ -105,6 +106,21 @@ async def report_deploy(results: list[CheckResult]) -> None:
     await deploy.clear()
 
 
+# A failing check's alert again only when its text changes or after this long.
+REPEAT_SECONDS = 30 * 60
+# Level -> the last alert of it sent (its text, when) - while it keeps failing.
+_last_sent: dict[str, tuple[str, float]] = {}
+
+
+async def _alert_on_change(level: Level, message: str) -> None:
+    last = _last_sent.get(level)
+    now = time.monotonic()
+    if last is not None and last[0] == message and now - last[1] < REPEAT_SECONDS:
+        return
+    _last_sent[level] = (message, now)
+    await alert("watchdog", level, message)
+
+
 async def run_once(adapter: MarketAdapter) -> None:
     results = await run_checks(adapter)
     for r in results:
@@ -118,7 +134,7 @@ async def run_once(adapter: MarketAdapter) -> None:
     if critical:
         reasons = "; ".join(f"{r.name}: {r.detail}" for r in critical)
         await set_kill_switch(True, reason=reasons)
-        await alert("watchdog", "critical", f"new positions disabled - {reasons}")
+        await _alert_on_change("critical", f"new positions disabled - {reasons}")
     elif await is_kill_switch_active():
         await set_kill_switch(False)
         await alert(
@@ -126,4 +142,9 @@ async def run_once(adapter: MarketAdapter) -> None:
         )
     elif failed:
         reasons = "; ".join(f"{r.name}: {r.detail}" for r in failed)
-        await alert("watchdog", "warning", reasons)
+        await _alert_on_change("warning", reasons)
+    # Passing again: the next failure alerts at once.
+    if not critical:
+        _last_sent.pop("critical", None)
+    if not failed or critical:
+        _last_sent.pop("warning", None)

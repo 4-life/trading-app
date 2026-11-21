@@ -39,7 +39,11 @@ from app.notifications.alerts import alert
 from app.notifications.trades import notify_order
 from app.papers.models import Paper
 from app.system.exchange_api import taker_fee_rate
-from app.watchdog.redis_client import set_heartbeat
+from app.watchdog.redis_client import (
+    acquire_liquidation_lock,
+    release_liquidation_lock,
+    set_heartbeat,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -643,11 +647,34 @@ async def _liquidate(
     )
 
 
+# The liquidation lock's expiry, should its holder die mid-pass.
+LIQUIDATION_LOCK_SECONDS = 120
+# Live positions found missing on the exchange - alerted once each (per process).
+_missing_alerted: set[int] = set()
+
+
 async def liquidate_breached(adapter: MarketAdapter, source: str) -> None:
     """Force-closes every open position whose remaining margin is at or below
     MAINTENANCE_MARGIN_PCT of its initial margin. Demo positions are priced
     from market data, live ones from the live exchange - whatever the live
-    auto-trading switch: a close, not an entry."""
+    auto-trading switch: a close, not an entry. One `source` at a time (the
+    liquidation lock), skipped while another runs. A live position the
+    exchange no longer holds (closed or liquidated there) isn't sent a close:
+    alerted once - the owner records it with the dashboard's Doesn't exist."""
+    if not await acquire_liquidation_lock(source, LIQUIDATION_LOCK_SECONDS):
+        return
+    try:
+        await _liquidate_breached(adapter, source)
+    finally:
+        await release_liquidation_lock(source)
+
+
+def held_on_exchange(direction: str, exchange_size: Decimal) -> bool:
+    """The exchange holds a `direction` position on the asset (its signed size)."""
+    return exchange_size > 0 if direction == "long" else exchange_size < 0
+
+
+async def _liquidate_breached(adapter: MarketAdapter, source: str) -> None:
     async with async_session() as session:
         positions = (
             await session.scalars(select(Position).where(Position.closed_at.is_(None)))
@@ -655,6 +682,7 @@ async def liquidate_breached(adapter: MarketAdapter, source: str) -> None:
     maintenance = Decimal(str(settings.maintenance_margin_pct))
     client = await live_client() if any(p.mode == "live" for p in positions) else None
     quotes: dict[tuple[str, str], Quote] = {}
+    exchange: dict[str, Decimal] | None = None  # read once, when a live one is due
     for position in positions:
         try:
             key = (position.mode, position.asset)
@@ -676,6 +704,21 @@ async def liquidate_breached(adapter: MarketAdapter, source: str) -> None:
                 quote.mid,
                 maintenance,
             ):
+                if position.mode == "live" and client is not None:
+                    if exchange is None:
+                        exchange = {p.asset: p.size for p in await client.positions()}
+                    held = exchange.get(position.asset, Decimal(0))
+                    if not held_on_exchange(position.direction, held):
+                        if position.id not in _missing_alerted:
+                            _missing_alerted.add(position.id)
+                            await alert(
+                                source,
+                                "critical",
+                                f"position {position.id} ({position.direction} {position.asset}) "
+                                "is past its liquidation level but not on the exchange - closed "
+                                "or liquidated there: record it with Doesn't exist and its price",
+                            )
+                        continue
                 await _liquidate(position.id, quote, source, client)
         except Exception:
             logger.exception("position %d: liquidation check failed", position.id)
@@ -684,6 +727,9 @@ async def liquidate_breached(adapter: MarketAdapter, source: str) -> None:
 async def run_once(adapter: MarketAdapter) -> None:
     await set_heartbeat(SERVICE_NAME)
     await liquidate_breached(adapter, "execution-engine")
+    # A slow pass of closes mustn't read as a stalled engine (the risk
+    # engine's fallback would step in).
+    await set_heartbeat(SERVICE_NAME)
     for decision_id in await _approved_ids():
         try:
             await _process(decision_id, adapter)

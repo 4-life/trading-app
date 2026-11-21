@@ -56,6 +56,21 @@ async def get_last_check_results() -> dict[str, Any] | None:
 
 
 _HEARTBEAT_KEY = "heartbeat:{}"
+_LIQUIDATION_LOCK_KEY = "liquidation:lock"
+
+
+async def acquire_liquidation_lock(holder: str, ttl_seconds: int) -> bool:
+    """One service closes breached positions at a time (the execution engine,
+    or the risk engine's fallback): two signing orders with the same exchange
+    key at once clash (Lighter: invalid nonce). Expires after `ttl_seconds`
+    should its holder die."""
+    return bool(await get_redis().set(_LIQUIDATION_LOCK_KEY, holder, nx=True, ex=ttl_seconds))
+
+
+async def release_liquidation_lock(holder: str) -> None:
+    r = get_redis()
+    if await r.get(_LIQUIDATION_LOCK_KEY) == holder:
+        await r.delete(_LIQUIDATION_LOCK_KEY)
 
 
 async def set_heartbeat(service: str) -> None:
