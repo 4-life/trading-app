@@ -3,6 +3,7 @@ export { ChartSection } from "./chart-section";
 export { DecisionsSection } from "./decisions-section";
 export { DemoSection } from "./demo-section";
 export { FaviconSection } from "./favicon-section";
+export { FearGreedSection } from "./fear-greed-section";
 export { HealthSection } from "./health-section";
 export { LiveSection } from "./live-section";
 export { PapersSection } from "./papers-section";

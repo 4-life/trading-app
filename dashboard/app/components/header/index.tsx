@@ -6,14 +6,16 @@ import { Button } from "@/components/ui/button";
 
 import { UtcClock } from "./utc-clock";
 
-// Title, system health, UTC clock, assets and settings buttons, log out
+// Title, system health, the Fear & Greed index, UTC clock, assets and settings buttons, log out
 // (docs/dashboard.md#header).
 export function Header({
   health,
+  sentiment,
   onOpenAssets,
   onOpenSettings,
 }: {
   health: ReactNode;
+  sentiment: ReactNode; // the Fear & Greed index
   onOpenAssets: () => void;
   onOpenSettings: () => void;
 }) {
@@ -22,6 +24,7 @@ export function Header({
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <h1 className="text-2xl font-semibold">Trading App</h1>
         {health}
+        {sentiment}
       </div>
       <div className="flex items-center gap-2">
         <UtcClock />

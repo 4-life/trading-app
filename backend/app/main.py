@@ -14,6 +14,7 @@ from app.api.papers import router as papers_router
 from app.api.portfolio import router as portfolio_router
 from app.api.positions import router as positions_router
 from app.api.reset import router as reset_router
+from app.api.sentiment import router as sentiment_router
 from app.api.settings import router as settings_router
 from app.api.system_health import router as system_health_router
 from app.notifications.error_reporting import setup_logging
@@ -47,6 +48,7 @@ for router in (
     portfolio_router,
     positions_router,
     reset_router,
+    sentiment_router,
     settings_router,
     system_health_router,
 ):

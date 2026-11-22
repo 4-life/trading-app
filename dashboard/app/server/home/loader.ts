@@ -9,6 +9,7 @@ import type { DecisionPage } from "@/types/decision";
 import type { Paper } from "@/types/paper";
 import type { Portfolio } from "@/types/portfolio";
 import type { Settings } from "@/types/settings";
+import type { FearGreed } from "@/types/sentiment";
 import type { SystemHealth } from "@/types/system-health";
 
 // The page's data, not waited for: each part streams in as the API answers
@@ -48,6 +49,7 @@ export async function loader({ request }: { request: Request }) {
     papers,
     decisions: load<DecisionPage>(request, `/decisions?${log.toString()}`),
     health: load<SystemHealth>(request, "/system-health"),
+    fearGreed: load<FearGreed>(request, "/fear-greed"),
     autoOpen: load<{ enabled: boolean }>(request, "/auto-open"),
     // Not load(): the settings modal shows why it failed.
     settings: api<Settings>(request, "/settings").catch(

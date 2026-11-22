@@ -19,6 +19,7 @@ All API calls happen on the dashboard server (route loaders/actions), which forw
 
 - Title.
 - [System health](#system-health).
+- The crypto **Fear & Greed index** (0 extreme fear – 100 extreme greed, from alternative.me — it's published once a day, read at most hourly): `Fear & Greed 23 · Extreme Fear`, red to green; while its source can't be read, the last value read, dimmed and marked "(last known)" — kept in Redis, so a restart keeps it too; hidden only if it was never read.
 - Current UTC time (`HH:MM:SS UTC`, ticking every second) — candles, logs and the server run in UTC.
 - Buttons that open the [assets](#assets) and [settings](#settings) modals.
 - Log out.

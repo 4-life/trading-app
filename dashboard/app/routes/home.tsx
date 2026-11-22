@@ -9,6 +9,7 @@ import {
   DecisionsSection,
   DemoSection,
   FaviconSection,
+  FearGreedSection,
   HealthSection,
   LiveSection,
   PapersSection,
@@ -47,6 +48,7 @@ export default function Home() {
       <div className="mx-auto max-w-[1600px] space-y-4 p-4 sm:p-6">
         <Header
           health={<HealthSection {...data} />}
+          sentiment={<FearGreedSection {...data} />}
           onOpenAssets={() => setAssetsOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
         />
