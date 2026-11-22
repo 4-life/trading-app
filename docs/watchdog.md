@@ -50,6 +50,7 @@ What is sent:
 - **Watchdog** — critical violations (kill switch on), recovery (kill switch off), warnings. A check still failing with the same text isn't repeated every pass: again only when the text changes or after 30 minutes (`REPEAT_SECONDS`); recovery at once.
 - **Risk engine** — papers disabled for losses.
 - **Execution engine / risk engine** — liquidations.
+- **Price records** — an asset at its highest / lowest price of its stored history, a year or half a year, once per asset per day ([market data](market-data.md#price-records)).
 - **Trades** — every position **open** and **close** (also partial closes, liquidations and live positions recorded as closed on the exchange), demo and live, sent right after it's committed (`backend/app/notifications/trades.py`). Not held back during a deploy.
 
   ```

@@ -95,5 +95,10 @@ Hyperliquid only: the SDK's WebSocket manager doesn't reconnect on its own once 
 
 All services share one per-IP rate limit at the provider. Every call — candles, funding, open interest, market data, and the client's initial connect — retries with backoff on HTTP 429. Connect gets the most patient retry budget: it runs once at startup, and a failure there kills one-shot services like `backfill`, which blocks the whole stack from starting.
 
+
+## Price records
+
+Every 15 minutes the risk engine checks each [asset](#asset-universe): is today's (UTC) high above — or its low below — its range in **its stored history**, the **last year** or the **last half year**? The widest window it broke goes to Telegram, **once per asset per day** (a Redis mark, `records:<asset>:<day>`): "📈 BTC at its highest price in its stored history (since 2025-10-12): 128,400.00 (before: 126,100.50)" / "📉 … lowest …". From the asset's stored interval reaching back furthest; a year or half a year only once the history covers it — "its stored history" is what the app has, not the coin's all-time record. `backend/app/market_data/records.py`.
+
 ---
 [← Back to README](../README.md)

@@ -56,6 +56,14 @@ async def get_last_check_results() -> dict[str, Any] | None:
 
 
 _HEARTBEAT_KEY = "heartbeat:{}"
+
+
+async def mark_once(key: str, ttl_seconds: int) -> bool:
+    """True the first time `key` is marked within `ttl_seconds` - for a
+    message sent once (per day, per asset...)."""
+    return bool(await get_redis().set(key, "1", nx=True, ex=ttl_seconds))
+
+
 _LIQUIDATION_LOCK_KEY = "liquidation:lock"
 
 

@@ -40,6 +40,7 @@ from app.execution_engine.models import (
 from app.executors.position_management import AVERAGE_DOWN, SIGNAL_ADD, STRENGTH_ADD, add_terms
 from app.market_data.collector import PRICE_INTERVAL
 from app.market_data.models import Candle
+from app.market_data.records import RECORDS_CHECK_SECONDS, check_records
 from app.market_data.shock_state import (
     SHOCK_BLOCK,
     entry_blocked,
@@ -533,6 +534,7 @@ class RiskEngine:
         self._adapter = adapter
         self._last_equity_snapshot = 0.0
         self._last_shock_check = 0.0
+        self._last_records_check = 0.0
 
     async def run_once(self) -> None:
         for step in (
@@ -541,6 +543,7 @@ class RiskEngine:
             _disable_losing_papers,
             self._liquidation_fallback,
             self._notify_shocks,
+            self._notify_records,
         ):
             try:
                 await step()
@@ -552,6 +555,14 @@ class RiskEngine:
 
     async def _liquidation_fallback(self) -> None:
         await _liquidation_fallback(self._adapter)
+
+    async def _notify_records(self) -> None:
+        """Assets at their highest / lowest price of their history, a year or half
+        a year - to Telegram once per asset per day (docs/market-data.md#price-records)."""
+        if time.time() - self._last_records_check < RECORDS_CHECK_SECONDS:
+            return
+        self._last_records_check = time.time()
+        await check_records()
 
     async def _notify_shocks(self) -> None:
         """New market shocks to Telegram (docs/market-shocks.md), once a minute."""
