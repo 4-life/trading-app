@@ -128,8 +128,33 @@ def unrealized_pnl(direction: str, entry_price: Decimal, price: Decimal, size: D
 
 
 # The app closes this far before the exchange would: at this multiple of the
-# exchange's maintenance margin.
-EXCHANGE_MAINTENANCE_BUFFER = Decimal("1.5")
+# exchange's maintenance margin. Kept small: near an asset's max leverage the
+# maintenance margin is most of the position's margin, so a large buffer would
+# leave almost no room to move.
+EXCHANGE_MAINTENANCE_BUFFER = Decimal("1.1")
+
+
+def liquidation_floor(
+    size: Decimal,
+    margin_usd: Decimal,
+    price: Decimal,
+    maintenance_margin_pct: Decimal,
+    exchange_maintenance: Decimal | None = None,
+) -> tuple[Decimal, str]:
+    """The remaining margin a position is closed at, and which rule sets it:
+    the maintenance share of its margin, or - higher - EXCHANGE_MAINTENANCE_BUFFER
+    x the exchange's maintenance margin (a share of the notional)."""
+    floor = margin_usd * maintenance_margin_pct
+    why = f"{maintenance_margin_pct:.0%} of its margin"
+    if exchange_maintenance is not None:
+        exchange_floor = exchange_maintenance * size * price * EXCHANGE_MAINTENANCE_BUFFER
+        if exchange_floor > floor:
+            floor = exchange_floor
+            why = (
+                f"{EXCHANGE_MAINTENANCE_BUFFER}x the exchange's "
+                f"{exchange_maintenance:.1%} maintenance margin"
+            )
+    return floor, why
 
 
 def liquidation_due(
@@ -147,10 +172,9 @@ def liquidation_due(
     (`exchange_maintenance`, a share of the notional; None: not known), so the
     app closes it before the exchange liquidates it."""
     remaining = margin_usd + unrealized_pnl(direction, entry_price, price, size)
-    floor = margin_usd * maintenance_margin_pct
-    if exchange_maintenance is not None:
-        exchange_floor = exchange_maintenance * size * price * EXCHANGE_MAINTENANCE_BUFFER
-        floor = max(floor, exchange_floor)
+    floor, _ = liquidation_floor(
+        size, margin_usd, price, maintenance_margin_pct, exchange_maintenance
+    )
     return remaining <= floor
 
 

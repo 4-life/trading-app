@@ -9,7 +9,8 @@ import pytest
 from app.backtest.stats import max_drawdown
 from app.budget_allocator import paper_budget_from
 from app.config import settings
-from app.execution_engine.demo import liquidation_due, profitability_pct
+from app.execution_engine.demo import liquidation_due, liquidation_floor, profitability_pct
+from app.execution_engine.engine import top_up_amount
 from app.executors.position_management import AVERAGE_DOWN, SIGNAL_ADD, STRENGTH_ADD
 from app.market_data.shocks import Shock
 from app.papers.models import Paper
@@ -36,15 +37,39 @@ def test_liquidation_at_maintenance_margin() -> None:
 
 
 def test_the_app_closes_before_the_exchange_liquidates() -> None:
-    # Position 141: a short of 3.4935 ETH at 1604.5, $140 of margin, the
-    # exchange's maintenance 1.2% - it liquidates near 1625 (remaining ~$68).
+    # A x40 short: 3.4935 at 1604.5, $140 of margin, the exchange's
+    # maintenance 1.2% - it liquidates near 1625 (remaining ~$68).
     args = ("short", Decimal("1604.5"), Decimal("3.4935"), Decimal(140))
     app, exchange = Decimal("0.2"), Decimal("0.012")
-    assert not liquidation_due(*args, Decimal(1610), app, exchange)
-    # $101 of the exchange's $67 x 1.5 left at ~1615.6: closed there, before 1625.
-    assert liquidation_due(*args, Decimal(1616), app, exchange)
+    assert not liquidation_due(*args, Decimal(1620), app, exchange)
+    # 1.1x the exchange's maintenance at ~1623.2: closed there, before 1625.
+    assert liquidation_due(*args, Decimal(1624), app, exchange)
     # Without it, only at 20% of the margin left (~1636): after the exchange.
     assert not liquidation_due(*args, Decimal(1630), app)
+
+
+def test_a_position_at_the_max_leverage_keeps_its_room() -> None:
+    # A long at the asset's max leverage, x20: 2.244 at 712.804, $79.98 of
+    # margin, the exchange's maintenance 3%. At 708.76 ($70.9 left) a 1.5x
+    # buffer would close it; 1.1x waits to ~700.3, before the exchange's ~698.1.
+    args = ("long", Decimal("712.804"), Decimal("2.244"), Decimal("79.9766088"))
+    app, exchange = Decimal("0.2"), Decimal("0.03")
+    assert not liquidation_due(*args, Decimal("708.76"), app, exchange)
+    assert liquidation_due(*args, Decimal(698), app, exchange)
+    floor, why = liquidation_floor(args[2], args[3], Decimal(698), app, exchange)
+    assert why == "1.1x the exchange's 3.0% maintenance margin" and floor > Decimal(51)
+
+
+def test_a_breached_live_position_is_topped_up_while_cash_and_room_last() -> None:
+    args = ("long", Decimal("712.804"), Decimal("2.244"), Decimal("79.9766088"))
+    initial, price = Decimal("79.9766088"), Decimal(698)
+    # Its loss so far, $33.23: moved in from $900 free.
+    assert top_up_amount(*args, initial, price, Decimal(900)) == Decimal("33.23")
+    assert top_up_amount(*args, initial, price, Decimal(20)) is None  # not enough cash
+    # At twice the margin put in already: closed instead.
+    full = ("long", args[1], args[2], Decimal(150))
+    assert top_up_amount(*full, initial, price, Decimal(900)) is None
+    assert top_up_amount(*args, initial, Decimal(720), Decimal(900)) is None  # in profit
 
 
 def test_profitability_is_return_on_margin() -> None:

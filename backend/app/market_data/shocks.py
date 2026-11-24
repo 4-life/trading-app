@@ -42,7 +42,7 @@ BREADTH = 0.7
 MIN_COINS = 3  # breadth needs this many other coins with candles
 RELATIVE = 0.05
 # A coin event's 1h return against BTC's, the same way, at least: a steady
-# 4h climb (ZEC +6.7% vs BTC +0.9% on 2026-11-03) isn't a shock.
+# climb over the 4h window isn't a shock.
 COIN_SPEED = 0.03
 COIN_VOLUME_SPIKE = 3.0
 VOLUME_WINDOWS = 20

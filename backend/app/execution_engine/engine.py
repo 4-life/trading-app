@@ -6,7 +6,7 @@ requests are sent to Hyperliquid (app/execution_engine/live.py)."""
 
 import logging
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_UP, Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,9 +21,11 @@ from app.execution_engine.demo import (
     funding_paid,
     grow,
     liquidation_due,
+    liquidation_floor,
     open_fill,
     open_side,
     profitability_pct,
+    unrealized_pnl,
 )
 from app.execution_engine.live import (
     LiveClient,
@@ -638,6 +640,33 @@ async def _process(decision_id: int, adapter: MarketAdapter) -> None:
         await alert(SERVICE_NAME, "info", f"paper {disabled.id} {disabled.asset}: {why}")
 
 
+# A live position about to be closed by the liquidation check is first held
+# off with free balance moved into it - the loss so far - while the margin it
+# holds stays within this multiple of all the margin put in.
+TOP_UP_CAP = Decimal(2)
+
+
+def top_up_amount(
+    direction: str,
+    entry_price: Decimal,
+    size: Decimal,
+    margin_usd: Decimal,
+    initial_margin_usd: Decimal,
+    price: Decimal,
+    free: Decimal,
+) -> Decimal | None:
+    """The margin to move into the position - its loss so far, which brings the
+    remaining margin back to what it holds - if the free balance covers it and
+    the position stays within TOP_UP_CAP x its margin put in; else None."""
+    loss = -unrealized_pnl(direction, entry_price, price, size)
+    if loss <= 0:
+        return None
+    amount = loss.quantize(Decimal("0.01"), rounding=ROUND_UP)
+    if amount > free or margin_usd + amount > TOP_UP_CAP * initial_margin_usd:
+        return None
+    return amount
+
+
 async def exchange_maintenance(asset: str) -> Decimal | None:
     """The exchange's maintenance margin for `asset` (a share of the notional)."""
     limits = await market_limits(asset)
@@ -653,6 +682,7 @@ async def _liquidate(
 ) -> None:
     market_price = quote.mid
     maintenance = Decimal(str(settings.maintenance_margin_pct))
+    topped: Decimal | None = None
     async with async_session() as session, session.begin():
         position = await session.scalar(
             select(Position)
@@ -672,31 +702,71 @@ async def _liquidate(
         paper = await session.get(Paper, position.paper_id)
         if paper is None:
             return
-        order_id = await close_position(session, position, paper, quote, LIQUIDATION, client)
-        session.add(
-            TradingDecision(
-                decided_at=datetime.now(UTC),
-                paper_id=paper.id,
-                mode=position.mode,
-                asset=position.asset,
-                feature_snapshot={},
-                signal="exit",
-                direction=position.direction,
-                reason=LIQUIDATION,
-                risk_approved=True,
-                risk_reason=f"liquidated by {source}: below {maintenance:.0%} maintenance margin",
-                entry_price=market_price,
-                outcome="placed",
-                order_id=order_id,
-            )
+        remaining = position.margin_usd + unrealized_pnl(
+            position.direction, position.entry_price, market_price, position.size
         )
+        floor, why = liquidation_floor(
+            position.size, position.margin_usd, market_price, maintenance, exchange_mm
+        )
+        # Live: held off with free balance first, while there's cash and room.
+        if position.mode == "live" and client is not None:
+            topped = await _top_up(position, paper, market_price, client)
+        if topped is None:
+            order_id = await close_position(session, position, paper, quote, LIQUIDATION, client)
+            session.add(
+                TradingDecision(
+                    decided_at=datetime.now(UTC),
+                    paper_id=paper.id,
+                    mode=position.mode,
+                    asset=position.asset,
+                    feature_snapshot={},
+                    signal="exit",
+                    direction=position.direction,
+                    reason=LIQUIDATION,
+                    risk_approved=True,
+                    risk_reason=(
+                        f"liquidated by {source}: {remaining:.2f} of margin left, at or below "
+                        f"{floor:.2f} ({why})"
+                    ),
+                    entry_price=market_price,
+                    outcome="placed",
+                    order_id=order_id,
+                )
+            )
+    label = f"paper {position.paper_id} {position.direction} {position.asset}"
+    left = f"{remaining:.2f} of margin left at {market_price}, at or below {floor:.2f} ({why})"
+    if topped is not None:
+        await alert(source, "warning", f"{label}: {left} - moved ${topped} of free balance into it")
+        return
     await notify_order(order_id)
-    await alert(
-        source,
-        "critical",
-        f"liquidated paper {position.paper_id} {position.direction} {position.asset} "
-        f"at {market_price}",
+    await alert(source, "critical", f"liquidated {label}: {left}")
+
+
+async def _top_up(
+    position: Position, paper: Paper, price: Decimal, client: LiveClient
+) -> Decimal | None:
+    """Moves the position's loss so far from the free balance into it
+    (top_up_amount) - on the exchange, then on the locked row; None if it
+    can't (no cash, the cap reached, the transfer refused)."""
+    free = (await client.account()).withdrawable
+    amount = top_up_amount(
+        position.direction,
+        position.entry_price,
+        position.size,
+        position.margin_usd,
+        position.initial_margin_usd,
+        price,
+        free,
     )
+    if amount is None:
+        return None
+    try:
+        await client.add_margin(paper.asset, amount)
+    except LiveOrderError as exc:
+        logger.warning("position %d: top-up of %s refused: %s", position.id, amount, exc)
+        return None
+    position.margin_usd += amount
+    return amount
 
 
 # The liquidation lock's expiry, should its holder die mid-pass.
