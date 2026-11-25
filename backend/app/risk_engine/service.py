@@ -71,6 +71,10 @@ class ShockHeld(Rejected):
     """Held back by a market shock (shock_state.entry_blocked)."""
 
 
+class MaxMarginReached(Rejected):
+    """Beyond the paper's own max margin - not the account's cash."""
+
+
 async def _check_shock(paper: Paper, direction: str) -> None:
     """Raises ShockHeld while a shock holds back a `direction` buy: a panic a
     long's, a bullrun a short's - the market's or the asset's own."""
@@ -304,19 +308,29 @@ async def _size_add(paper: Paper, direction: str, reason: str) -> tuple[Decimal,
                 )
             )
             cap = paper.max_margin_usd
+            realized = Decimal(0)
             if paper.compound_margin:
                 # Compounding: the max margin grows with the closed positions'
                 # realized PnL in this mode (losses shrink it).
-                realized = await session.scalar(
-                    select(func.coalesce(func.sum(Position.realized_pnl_usd), 0)).where(
-                        Position.paper_id == paper.id,
-                        Position.mode == paper.mode,
-                        Position.closed_at.is_not(None),
+                realized = Decimal(
+                    await session.scalar(
+                        select(func.coalesce(func.sum(Position.realized_pnl_usd), 0)).where(
+                            Position.paper_id == paper.id,
+                            Position.mode == paper.mode,
+                            Position.closed_at.is_not(None),
+                        )
                     )
+                    or 0
                 )
-                cap += realized or Decimal(0)
+                cap += realized
         if locked is not None and locked + margin > cap:
-            raise Rejected(f"max margin reached: {locked:.2f} locked + {margin:.2f} > {cap:.2f}")
+            parts = f"max margin {paper.max_margin_usd:.2f}"
+            if paper.compound_margin:
+                parts += f" {realized:+.2f} realized PnL (compounding)"
+            raise MaxMarginReached(
+                f"the paper's max margin reached: {locked:.2f} locked + {margin:.2f} > "
+                f"{cap:.2f} ({parts})"
+            )
     cash_left = await _require_cash(paper, margin, notional)
     return notional, _low_margin_warning(paper, margin, locked, cap, cash_left)
 
@@ -407,11 +421,20 @@ async def _decide(decision_id: int) -> None:
                 and not shock_held
                 and await _first_rejected_add(session, decision)
             ):
-                warning = (
-                    f"paper {decision.paper_id} {decision.asset} ({decision.mode}): add rejected - "
-                    f"{exc}. Averaging is paused until there's free balance (retried every "
-                    "candle); a deeper drop can liquidate the position - top up the account."
-                )
+                head = f"paper {decision.paper_id} {decision.asset} ({decision.mode}): add rejected"
+                if isinstance(exc, MaxMarginReached):
+                    # The paper's own limit: free balance doesn't lift it.
+                    warning = (
+                        f"{head} - {exc}. Averaging is paused at the paper's limit, whatever "
+                        "the free balance; a deeper drop can liquidate the position - raise "
+                        "the paper's Max margin to keep averaging."
+                    )
+                else:
+                    warning = (
+                        f"{head} - {exc}. Averaging is paused until there's free balance "
+                        "(retried every candle); a deeper drop can liquidate the position - "
+                        "top up the account."
+                    )
         else:
             decision.risk_approved = True
             decision.risk_reason = note or "approved"
