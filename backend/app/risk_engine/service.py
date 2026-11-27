@@ -48,6 +48,7 @@ from app.market_data.shock_state import (
     recent_shocks,
 )
 from app.notifications.alerts import alert
+from app.order_queue import MANUAL_OPEN
 from app.papers.models import Paper
 from app.risk_engine.blocks import block_paper, is_entry_blocked, unblock_paper
 from app.risk_engine.engine import evaluate
@@ -183,6 +184,8 @@ async def _size_entry(decision: TradingDecision, paper: Paper) -> tuple[Decimal,
     fixed size, if the cash is there."""
     if not paper.enabled:
         raise Rejected("paper is disabled")
+    if decision.reason == MANUAL_OPEN:
+        return await _size_manual(paper)
     if await is_kill_switch_active():
         raise Rejected("watchdog kill switch active")
     await _check_shock(paper, decision.direction)
@@ -244,6 +247,25 @@ async def _size_entry(decision: TradingDecision, paper: Paper) -> tuple[Decimal,
     approved = Decimal(str(result.approved_notional_usd))
     await _require_cash(paper, approved / paper.leverage, approved)
     return approved, result.reason
+
+
+async def _size_manual(paper: Paper) -> tuple[Decimal, str]:
+    """The owner's own entry (the dashboard's Long / Short): sized like the
+    paper's first entry - its initial size, else its budget share - at its
+    leverage; none of the risk limits, blocks, market shocks or the kill
+    switch apply. Still refused where it can't be placed: the asset held by
+    another paper in the mode (one net position per market on the exchange)
+    or no free cash for it."""
+    if holder := await _asset_taken(paper):
+        raise Rejected(f"{paper.asset} is already held in {paper.mode} by paper {holder}")
+    margin = paper.initial_size_usd
+    if margin is None:
+        margin = await paper_budget(paper.mode)
+        if margin is None or margin <= 0:
+            raise Rejected(f"no {paper.mode} budget for it")
+    notional = margin * paper.leverage
+    await _require_cash(paper, margin, notional)
+    return notional, "manual open - the risk limits don't apply"
 
 
 def _low_margin_warning(

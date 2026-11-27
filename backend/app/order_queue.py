@@ -21,6 +21,9 @@ Direction = Literal["long", "short"]
 # A live paper's signal while the live auto-trading switch is off
 # (docs/strategy-executor.md): recorded as rejected, never placed.
 AUTO_TRADING_OFF = "live auto-trading off"
+# The dashboard's Long / Short (app/execution_engine/manual_close.py): the
+# owner's own entry - the risk engine only sizes it.
+MANUAL_OPEN = "manual_open"
 
 
 @dataclass(frozen=True)

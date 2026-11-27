@@ -1,9 +1,10 @@
 """The dashboard's position buttons.
 
 - Long / Short (a paper's): queues an entry for an enabled paper with no
-  open position, reason `manual_open` - through the risk engine and the
-  execution engine as any executor's entry (not held back by the live
-  auto-trading switch: that's for the app's own entries). The paper's
+  open position, reason `manual_open` - the risk engine only sizes it (none
+  of its limits, blocks or the kill switch hold it back), then the execution
+  engine places it (not held back by the live auto-trading switch either:
+  that's for the app's own entries). The paper's
   executor manages the position from there.
 - Close: queues an exit request for one open position. It goes through the
   same order queue as any executor exit (risk engine, then execution engine)
@@ -44,7 +45,7 @@ from app.execution_engine.models import (
 from app.executors.base import latest_price
 from app.notifications.alerts import alert
 from app.notifications.trades import notify_closed_on_exchange
-from app.order_queue import Signal, queue_decision
+from app.order_queue import MANUAL_OPEN, Signal, queue_decision
 from app.papers.models import Paper
 from app.system.exchange_api import taker_fee_rate
 
@@ -52,9 +53,6 @@ logger = logging.getLogger(__name__)
 
 CLOSED_ON_EXCHANGE = "closed_on_exchange"
 CLOSED_ON_EXCHANGE_STOP = "position closed on the exchange"
-
-
-MANUAL_OPEN = "manual_open"
 
 
 async def request_manual_open(paper: Paper, direction: Literal["long", "short"]) -> int:

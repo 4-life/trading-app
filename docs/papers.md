@@ -82,7 +82,7 @@ A **single** paper can set its own **stop-loss** (`stop_loss_pct`) and **take-pr
 
 ## Manual entry
 
-The papers table's row menu has **Open long** / **Open short** for an enabled paper (demo or live) with an asset, ready (not preparing), with **no open position** — only the directions the paper trades (a both paper: both). It queues an entry (reason `manual_open`, [`POST /papers/{id}/open`](api.md)) that goes through the [risk engine](risk-engine.md) — its sizing and rules, a market shock's block too — and the execution engine as any executor's entry; the live auto-trading switch doesn't hold it back (that's for the app's own entries). A live paper's asks first. The paper's executor manages the position from there: its exits, adds and stops, as for its own entries.
+The papers table's row menu has **Open long** / **Open short** for an enabled paper (demo or live) with an asset, ready (not preparing), with **no open position** — only the directions the paper trades (a both paper: both). It queues an entry (reason `manual_open`, [`POST /papers/{id}/open`](api.md)): the [risk engine](risk-engine.md) **only sizes it** — like the paper's first entry, its initial size (else its budget share) at its leverage — and **none of its limits apply**: no loss limits or blocks, no market-shock block, not the watchdog's kill switch; the live auto-trading switch doesn't hold it back either. Still refused where it can't be placed: the asset already held in the mode by another paper (the exchange nets one position per market) or no free cash for it. Then the execution engine places it. A live paper's asks first. The paper's executor manages the position from there: its exits, adds and stops, as for its own entries.
 
 ## Dynamic take-profit
 
